@@ -5,9 +5,9 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Outfit", sans-serif;
 
-  --color-brand-navy: #B91C1C;
-  --color-brand-gold: #F87171;
-  --color-brand-bg: #FFF5F5;
+  --color-brand-navy: #111827;
+  --color-brand-gold: #DC2626;
+  --color-brand-bg: #FAFAFA;
   --color-brand-crimson: #991B1B;
   --color-brand-rose: #FECACA;
 }
@@ -15,29 +15,29 @@
 @layer base {
   body {
     @apply font-sans antialiased;
-    background: linear-gradient(135deg, #fff5f5 0%, #ffffff 40%, #fef2f2 100%);
+    background: #ffffff;
     min-height: 100vh;
     color: var(--color-brand-navy);
   }
 }
 
 .card-shadow {
-  box-shadow: 0 10px 30px -10px rgba(185, 28, 28, 0.15);
+  box-shadow: 0 8px 24px -8px rgba(17, 24, 39, 0.1);
 }
 
 .glass-panel {
-  background: rgba(255, 255, 255, 0.75);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
 }
 
 .glass-card {
-  background: rgba(255, 255, 255, 0.65);
+  background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(254, 202, 202, 0.4);
-  box-shadow: 0 8px 32px rgba(185, 28, 28, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  box-shadow: 0 4px 24px rgba(17, 24, 39, 0.06);
 }
 
 .gradient-red {
@@ -45,7 +45,7 @@
 }
 
 .gradient-card {
-  background: linear-gradient(135deg, rgba(185, 28, 28, 0.92) 0%, rgba(220, 38, 38, 0.95) 100%);
+  background: linear-gradient(135deg, rgba(185, 28, 28, 0.95) 0%, rgba(220, 38, 38, 0.98) 100%);
 }
 
 .gradient-soft {

@@ -338,8 +338,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{background: 'linear-gradient(135deg, #fff5f5 0%, #ffffff 40%, #fef2f2 100%)'}}>
-        <motion.div 
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
         >
@@ -354,14 +354,14 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen pb-24 max-w-md mx-auto shadow-2xl shadow-brand-navy/10 relative overflow-hidden" style={{background: 'linear-gradient(160deg, #fff5f5 0%, #ffffff 50%, #fef2f2 100%)'}}>
+    <div className="min-h-screen pb-24 max-w-md mx-auto shadow-xl shadow-black/5 relative overflow-hidden bg-white">
       {/* Header */}
       <header className="glass-panel sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 gradient-red rounded-lg flex items-center justify-center">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
-          <h1 className="font-display font-bold text-xl tracking-tight">GlowLoyalty</h1>
+          <h1 className="font-display font-bold text-xl tracking-tight"><span className="text-brand-gold">Li</span>nq</h1>
         </div>
         <div className="flex items-center gap-4">
           <button className="relative p-2 text-brand-navy/60 hover:text-brand-navy transition-colors">
@@ -450,7 +450,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass-panel border-t border-brand-navy/5 px-4 py-4 flex justify-between items-center z-50">
+      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto glass-panel border-t border-black/5 px-4 py-4 flex justify-between items-center z-50">
         <NavButton 
           active={activeTab === 'for-you'} 
           onClick={() => { setActiveTab('for-you'); setViewingStore(null); setViewingUser(null); }}
@@ -500,7 +500,7 @@ function LandingPage({ onLogin }: { onLogin: () => void }) {
         <div className="w-24 h-24 bg-white/20 backdrop-blur-sm rounded-[2rem] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-black/20 border border-white/30">
           <Sparkles className="w-12 h-12 text-white" />
         </div>
-        <h1 className="font-display text-4xl font-bold text-white mb-4">GlowLoyalty</h1>
+        <h1 className="font-display text-4xl font-bold text-white mb-4">Linq</h1>
         <p className="text-white/60 text-lg max-w-xs mx-auto">
           Collect stamps, unlock rewards, and support your favorite local businesses.
         </p>
