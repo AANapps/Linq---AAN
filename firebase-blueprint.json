@@ -124,12 +124,37 @@
         "fromUid": { "type": "string" },
         "fromName": { "type": "string" },
         "fromPhoto": { "type": "string" },
-        "type": { "type": "string", "enum": ["friend_request", "system", "like", "mention"] },
+        "type": { "type": "string", "enum": ["friend_request", "system", "like", "mention", "message"] },
         "message": { "type": "string" },
         "isRead": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["toUid", "type", "message"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "A conversation between two users.",
+      "type": "object",
+      "properties": {
+        "uids": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "lastActivity": { "type": "string", "format": "date-time" },
+        "unreadCount": { "type": "object" }
+      },
+      "required": ["uids", "lastActivity"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "An individual message within a Chat.",
+      "type": "object",
+      "properties": {
+        "chatId": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["chatId", "senderUid", "text", "createdAt"]
     }
   },
   "firestore": {
@@ -141,6 +166,8 @@
     "/user_reviews/{reviewId}": { "schema": "UserReview", "description": "Reviews for users." },
     "/friend_requests/{requestId}": { "schema": "FriendRequest", "description": "Friendship requests." },
     "/friendships/{friendshipId}": { "schema": "Friendship", "description": "Confirmed friendships." },
-    "/notifications/{notificationId}": { "schema": "Notification", "description": "User notifications." }
+    "/notifications/{notificationId}": { "schema": "Notification", "description": "User notifications." },
+    "/chats/{chatId}": { "schema": "Chat", "description": "User conversations." },
+    "/chats/{chatId}/messages/{messageId}": { "schema": "ChatMessage", "description": "Chat message history." }
   }
 }

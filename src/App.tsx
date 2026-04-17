@@ -204,6 +204,23 @@ interface Transaction {
   reward_claimed: boolean;
 }
 
+interface Chat {
+  id: string;
+  uids: string[];
+  lastMessage: string;
+  lastActivity: any;
+  unreadCount?: { [uid: string]: number };
+}
+
+interface ChatMessage {
+  id: string;
+  chatId: string;
+  senderUid: string;
+  senderName: string;
+  text: string;
+  createdAt: any;
+}
+
 interface Post {
   id: string;
   store_id: string;
@@ -234,6 +251,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('for-you');
   const [viewingStore, setViewingStore] = useState<StoreProfile | null>(null);
   const [viewingUser, setViewingUser] = useState<UserProfile | null>(null);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [userCards, setUserCards] = useState<Card[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -394,6 +412,11 @@ export default function App() {
               onBack={() => setViewingUser(null)} 
               currentUser={user}
               currentProfile={profile}
+              onMessage={(chatId) => {
+                setActiveChatId(chatId);
+                setActiveTab('messages');
+                setViewingUser(null);
+              }}
               onViewStore={(s) => {
                 setViewingUser(null);
                 setViewingStore(s);
@@ -410,6 +433,8 @@ export default function App() {
               onViewUser={setViewingUser}
               cards={userCards}
               notifications={notifications}
+              activeChatId={activeChatId}
+              setActiveChatId={setActiveChatId}
             />
           ) : (
             <VendorApp 
@@ -420,6 +445,8 @@ export default function App() {
               user={user} 
               onViewUser={setViewingUser}
               notifications={notifications}
+              activeChatId={activeChatId}
+              setActiveChatId={setActiveChatId}
             />
           )}
         </AnimatePresence>
@@ -538,7 +565,7 @@ function NavButton({ active, onClick, icon, label, badgeCount }: { active: boole
 
 // --- Consumer App ---
 
-function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onViewUser, cards: initialCards, notifications }: { activeTab: string, setActiveTab: (tab: string) => void, profile: UserProfile | null, user: FirebaseUser, onViewStore: (s: StoreProfile) => void, onViewUser: (u: UserProfile) => void, cards: Card[], notifications: Notification[], key?: React.Key }) {
+function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onViewUser, cards: initialCards, notifications, activeChatId, setActiveChatId }: { activeTab: string, setActiveTab: (tab: string) => void, profile: UserProfile | null, user: FirebaseUser, onViewStore: (s: StoreProfile) => void, onViewUser: (u: UserProfile) => void, cards: Card[], notifications: Notification[], activeChatId: string | null, setActiveChatId: (id: string | null) => void, key?: React.Key }) {
   const [stores, setStores] = useState<StoreProfile[]>([]);
 
   useEffect(() => {
@@ -590,7 +617,13 @@ function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onVi
       )}
 
       {activeTab === 'messages' && (
-        <MessagesScreen />
+        <MessagesScreen 
+          currentUser={user} 
+          currentProfile={profile} 
+          activeChatId={activeChatId} 
+          setActiveChatId={setActiveChatId}
+          onViewUser={onViewUser}
+        />
       )}
 
       {activeTab === 'home' && (
@@ -649,7 +682,7 @@ function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onVi
 
 // --- Vendor App ---
 
-function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notifications }: { activeTab: string, setActiveTab: (tab: string) => void, profile: UserProfile | null, user: FirebaseUser, onViewUser: (u: UserProfile) => void, notifications: Notification[], key?: React.Key }) {
+function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notifications, activeChatId, setActiveChatId }: { activeTab: string, setActiveTab: (tab: string) => void, profile: UserProfile | null, user: FirebaseUser, onViewUser: (u: UserProfile) => void, notifications: Notification[], activeChatId: string | null, setActiveChatId: (id: string | null) => void, key?: React.Key }) {
   const [store, setStore] = useState<StoreProfile | null>(null);
   const [userCards, setUserCards] = useState<Card[]>([]);
 
@@ -840,7 +873,13 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
       )}
 
       {activeTab === 'messages' && (
-        <MessagesScreen />
+        <MessagesScreen 
+          currentUser={user} 
+          currentProfile={profile} 
+          activeChatId={activeChatId} 
+          setActiveChatId={setActiveChatId}
+          onViewUser={onViewUser}
+        />
       )}
 
       {activeTab === 'home' && (
@@ -1882,7 +1921,8 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
 
   if (!profile) return null;
 
-  const totalStamps = profile.totalStamps || 0;
+  const lifetimeStamps = userCards.reduce((acc, c) => acc + (c.current_stamps || 0) + ((c.total_completed_cycles || 0) * 10), 0) || profile.totalStamps || 0;
+  const totalStamps = lifetimeStamps;
   const archivedCardsCount = profile.totalRedeemed || 0;
   const activeCardsCount = userCards.filter(c => !c.isArchived).length;
   const [showFriendsModal, setShowFriendsModal] = useState(false);
@@ -2657,22 +2697,221 @@ function ForYouScreen({ onViewUser, onViewStore, notifications }: { onViewUser: 
   );
 }
 
-function MessagesScreen() {
+function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveChatId, onViewUser }: { currentUser: FirebaseUser, currentProfile: UserProfile | null, activeChatId: string | null, setActiveChatId: (id: string | null) => void, onViewUser: (u: UserProfile) => void }) {
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [chatPartner, setChatPartner] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'chats'), 
+      where('uids', 'array-contains', currentUser.uid),
+      orderBy('lastActivity', 'desc')
+    );
+    return onSnapshot(q, (snap) => {
+      setChats(snap.docs.map(d => ({ id: d.id, ...d.data() } as Chat)));
+    });
+  }, [currentUser.uid]);
+
+  useEffect(() => {
+    if (!activeChatId) {
+      setMessages([]);
+      setChatPartner(null);
+      return;
+    }
+
+    const q = query(
+      collection(db, 'chats', activeChatId, 'messages'),
+      orderBy('createdAt', 'asc')
+    );
+    
+    // Fetch chat partner profile
+    const chat = chats.find(c => c.id === activeChatId);
+    if (chat) {
+      const partnerUid = chat.uids.find(id => id !== currentUser.uid);
+      if (partnerUid) {
+        getDoc(doc(db, 'users', partnerUid)).then(snap => {
+          if (snap.exists()) setChatPartner({ uid: snap.id, ...snap.data() } as UserProfile);
+        });
+      }
+    }
+
+    return onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage)));
+    });
+  }, [activeChatId, currentUser.uid, chats]);
+
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !activeChatId) return;
+    const text = newMessage;
+    setNewMessage('');
+
+    try {
+      const messageData = {
+        chatId: activeChatId,
+        senderUid: currentUser.uid,
+        senderName: currentProfile?.name || currentUser.displayName || 'Me',
+        text,
+        createdAt: serverTimestamp()
+      };
+      
+      await addDoc(collection(db, 'chats', activeChatId, 'messages'), messageData);
+      
+      await updateDoc(doc(db, 'chats', activeChatId), {
+        lastMessage: text,
+        lastActivity: serverTimestamp()
+      });
+
+      // Send notification to partner
+      const partnerUid = chatPartner?.uid;
+      if (partnerUid) {
+        await addDoc(collection(db, 'notifications'), {
+          toUid: partnerUid,
+          fromUid: currentUser.uid,
+          fromName: currentProfile?.name || currentUser.displayName || 'Friend',
+          fromPhoto: currentProfile?.photoURL || currentUser.photoURL || '',
+          type: 'message',
+          message: `New message: ${text.substring(0, 50)}${text.length > 50 ? '...' : ''}`,
+          isRead: false,
+          createdAt: serverTimestamp()
+        });
+      }
+    } catch (err) {
+      console.error("Send message error:", err);
+    }
+  };
+
+  if (activeChatId && chatPartner) {
+    return (
+      <motion.div 
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        className="fixed inset-0 bg-brand-bg z-[100] flex flex-col max-w-md mx-auto"
+      >
+        <header className="glass-panel px-6 py-4 flex items-center gap-4">
+          <button onClick={() => setActiveChatId(null)} className="p-2 -ml-2 text-brand-navy/60">
+            <ArrowLeft size={24} />
+          </button>
+          <div className="flex items-center gap-3 flex-1">
+            <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shadow-sm cursor-pointer" onClick={() => onViewUser(chatPartner)}>
+              <img src={chatPartner.photoURL} alt="" className="w-full h-full object-cover" />
+            </div>
+            <div>
+              <h3 className="font-bold text-sm leading-tight">{chatPartner.name}</h3>
+              <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">Online</p>
+            </div>
+          </div>
+          <button className="p-2 text-brand-navy/60">
+            <MoreVertical size={20} />
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-6 py-8 space-y-4">
+          {messages.map((msg, idx) => {
+            const isMe = msg.senderUid === currentUser.uid;
+            const showName = idx === 0 || messages[idx-1].senderUid !== msg.senderUid;
+            return (
+              <div key={msg.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
+                {showName && !isMe && <span className="text-[10px] font-bold text-brand-navy/40 mb-1 ml-2">{msg.senderName}</span>}
+                <div className={cn(
+                  "max-w-[80%] p-4 rounded-3xl text-sm shadow-sm",
+                  isMe ? "bg-brand-navy text-white rounded-tr-none" : "bg-white text-brand-navy rounded-tl-none border border-brand-navy/5"
+                )}>
+                  {msg.text}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="p-6 bg-white border-t border-brand-navy/5">
+          <div className="flex gap-2">
+            <input 
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
+              placeholder="Type a message..."
+              className="flex-1 px-6 py-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm"
+            />
+            <button 
+              onClick={handleSendMessage}
+              disabled={!newMessage.trim()}
+              className="p-4 bg-brand-gold text-brand-navy rounded-2xl shadow-lg shadow-brand-gold/20 active:scale-95 transition-all disabled:opacity-50"
+            >
+              <Send size={20} />
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <header>
         <h2 className="font-display text-3xl font-bold mb-1">Messages</h2>
-        <p className="text-brand-navy/60 text-sm">Chat with vendors and friends.</p>
+        <p className="text-brand-navy/60 text-sm">Direct conversations with others.</p>
       </header>
 
-      <div className="bg-white p-10 rounded-[2.5rem] border-2 border-dashed border-brand-navy/5 text-center">
-        <div className="w-16 h-16 bg-brand-bg rounded-full flex items-center justify-center mx-auto mb-4">
-          <MessageCircle className="w-8 h-8 text-brand-navy/20" />
-        </div>
-        <p className="text-brand-navy/60 mb-2 font-bold">No messages yet</p>
-        <p className="text-xs text-brand-navy/40">Direct messaging is coming soon!</p>
+      <div className="space-y-3">
+        {chats.map(chat => {
+          const partnerUid = chat.uids.find(id => id !== currentUser.uid);
+          return (
+            <ChatListItem 
+              key={chat.id} 
+              chat={chat} 
+              currentUser={currentUser} 
+              onClick={() => setActiveChatId(chat.id)} 
+            />
+          );
+        })}
+
+        {chats.length === 0 && (
+          <div className="bg-white p-10 rounded-[2.5rem] border-2 border-dashed border-brand-navy/5 text-center">
+            <div className="w-16 h-16 bg-brand-bg rounded-full flex items-center justify-center mx-auto mb-4">
+              <MessageCircle className="w-8 h-8 text-brand-navy/20" />
+            </div>
+            <p className="text-brand-navy/60 mb-2 font-bold">No conversations</p>
+            <p className="text-xs text-brand-navy/40">Start a message from someone's profile!</p>
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function ChatListItem({ chat, currentUser, onClick }: { chat: Chat, currentUser: FirebaseUser, onClick: () => void }) {
+  const [partner, setPartner] = useState<UserProfile | null>(null);
+  const partnerUid = chat.uids.find(id => id !== currentUser.uid);
+
+  useEffect(() => {
+    if (!partnerUid) return;
+    getDoc(doc(db, 'users', partnerUid)).then(snap => {
+      if (snap.exists()) setPartner({ uid: snap.id, ...snap.data() } as UserProfile);
+    });
+  }, [partnerUid]);
+
+  if (!partner) return null;
+
+  return (
+    <button 
+      onClick={onClick}
+      className="w-full bg-white p-4 rounded-2xl flex items-center gap-4 border border-brand-navy/5 hover:border-brand-gold/20 transition-all text-left"
+    >
+      <div className="w-14 h-14 rounded-2xl overflow-hidden border border-brand-navy/5">
+        <img src={partner.photoURL} alt="" className="w-full h-full object-cover" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex justify-between items-center mb-1">
+          <h4 className="font-bold text-sm truncate">{partner.name}</h4>
+          <span className="text-[10px] text-brand-navy/40 uppercase font-bold">
+            {chat.lastActivity?.toDate ? format(chat.lastActivity.toDate(), 'HH:mm') : '...'}
+          </span>
+        </div>
+        <p className="text-xs text-brand-navy/60 truncate">{chat.lastMessage || 'Start a conversation'}</p>
+      </div>
+    </button>
   );
 }
 
@@ -3053,8 +3292,10 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser }: { store:
   );
 }
 
-function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, onViewStore }: { targetUser: UserProfile, onBack: () => void, currentUser: FirebaseUser, currentProfile: UserProfile | null, onViewStore: (s: StoreProfile) => void, key?: React.Key }) {
+function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser, currentProfile, onViewStore, onMessage }: { targetUser: UserProfile, onBack: () => void, currentUser: FirebaseUser, currentProfile: UserProfile | null, onViewStore: (s: StoreProfile) => void, onMessage?: (uid: string) => void, key?: React.Key }) {
+  const [targetUser, setTargetUser] = useState<UserProfile>(initialTargetUser);
   const [cards, setCards] = useState<Card[]>([]);
+  const [allCards, setAllCards] = useState<Card[]>([]);
   const [stores, setStores] = useState<StoreProfile[]>([]);
   const [vendorStore, setVendorStore] = useState<StoreProfile | null>(null);
   const [transactionHistory, setTransactionHistory] = useState<any[]>([]);
@@ -3065,30 +3306,43 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
   const [friendStatus, setFriendStatus] = useState<'none' | 'pending' | 'friends'>('none');
 
   useEffect(() => {
+    // Listen to target user profile for real-time stamp updates
+    const unsubProfile = onSnapshot(doc(db, 'users', initialTargetUser.uid), (doc) => {
+      if (doc.exists()) {
+        setTargetUser({ uid: doc.id, ...doc.data() } as UserProfile);
+      }
+    });
+
     // Fetch all stores to match with cards
     getDocs(collection(db, 'stores')).then(snap => {
       setStores(snap.docs.map(d => ({ id: d.id, ...d.data() } as StoreProfile)));
     });
 
-    const q = query(collection(db, 'cards'), where('user_id', '==', targetUser.uid), where('isArchived', '==', false));
+    const q = query(collection(db, 'cards'), where('user_id', '==', initialTargetUser.uid), where('isArchived', '==', false));
     const unsubCards = onSnapshot(q, (snap) => {
       setCards(snap.docs.map(d => ({ id: d.id, ...d.data() } as Card)));
     }, (error) => {
       console.error("Public profile cards error:", error);
     });
 
-    const hq = query(collection(db, 'transactions'), where('user_id', '==', targetUser.uid), orderBy('completed_at', 'desc'), limit(10));
+    // Fetch all cards (including archived) for lifetime stamp count
+    const allQ = query(collection(db, 'cards'), where('user_id', '==', initialTargetUser.uid));
+    const unsubAllCards = onSnapshot(allQ, (snap) => {
+      setAllCards(snap.docs.map(d => ({ id: d.id, ...d.data() } as Card)));
+    });
+
+    const hq = query(collection(db, 'transactions'), where('user_id', '==', initialTargetUser.uid), orderBy('completed_at', 'desc'), limit(10));
     const unsubHistory = onSnapshot(hq, (snap) => {
       setTransactionHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
-    const rq = query(collection(db, 'user_reviews'), where('toUid', '==', targetUser.uid), orderBy('createdAt', 'desc'));
+    const rq = query(collection(db, 'user_reviews'), where('toUid', '==', initialTargetUser.uid), orderBy('createdAt', 'desc'));
     const unsubReviews = onSnapshot(rq, (snap) => {
       setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
     // Friendship listener
-    const friendshipId = [currentUser.uid, targetUser.uid].sort().join('_');
+    const friendshipId = [currentUser.uid, initialTargetUser.uid].sort().join('_');
     const unsubFriendship = onSnapshot(doc(db, 'friendships', friendshipId), (snap) => {
       if (snap.exists()) {
         setFriendStatus('friends');
@@ -3096,7 +3350,7 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
         // Check for outgoing pending request
         const rqOut = query(collection(db, 'friend_requests'), 
           where('fromUid', '==', currentUser.uid), 
-          where('toUid', '==', targetUser.uid), 
+          where('toUid', '==', initialTargetUser.uid), 
           where('status', '==', 'pending')
         );
         const unsubOut = onSnapshot(rqOut, (snapOut) => {
@@ -3105,7 +3359,7 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
           } else {
             // Check for incoming pending request
             const rqIn = query(collection(db, 'friend_requests'), 
-              where('fromUid', '==', targetUser.uid), 
+              where('fromUid', '==', initialTargetUser.uid), 
               where('toUid', '==', currentUser.uid), 
               where('status', '==', 'pending')
             );
@@ -3120,8 +3374,8 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
     });
 
     let unsubStore = () => {};
-    if (targetUser.role === 'vendor') {
-      const bq = query(collection(db, 'stores'), where('ownerUid', '==', targetUser.uid), limit(1));
+    if (initialTargetUser.role === 'vendor') {
+      const bq = query(collection(db, 'stores'), where('ownerUid', '==', initialTargetUser.uid), limit(1));
       unsubStore = onSnapshot(bq, (snap) => {
         if (!snap.empty) {
           setVendorStore({ id: snap.docs[0].id, ...snap.docs[0].data() } as StoreProfile);
@@ -3130,13 +3384,32 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
     }
 
     return () => {
+      unsubProfile();
       unsubCards();
+      unsubAllCards();
       unsubStore();
       unsubHistory();
       unsubReviews();
       unsubFriendship();
     };
-  }, [targetUser.uid, targetUser.role, currentUser.uid]);
+  }, [initialTargetUser.uid, initialTargetUser.role, currentUser.uid]);
+
+  const handleMessageClick = async () => {
+    const chatId = [currentUser.uid, targetUser.uid].sort().join('_');
+    const chatRef = doc(db, 'chats', chatId);
+    const chatSnap = await getDoc(chatRef);
+    
+    if (!chatSnap.exists()) {
+      await setDoc(chatRef, {
+        uids: [currentUser.uid, targetUser.uid],
+        lastActivity: serverTimestamp(),
+        lastMessage: '',
+        createdAt: serverTimestamp()
+      });
+    }
+    
+    if (onMessage) onMessage(chatId);
+  };
 
   const handleFriendClick = async () => {
     if (friendStatus !== 'none') return;
@@ -3213,7 +3486,7 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
                 onClick={handleFriendClick}
                 disabled={friendStatus === 'pending' || friendStatus === 'friends'}
                 className={cn(
-                  "flex items-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm transition-all shadow-lg",
+                  "flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm transition-all shadow-lg",
                   friendStatus === 'friends' 
                     ? "bg-green-500 text-white" 
                     : friendStatus === 'pending'
@@ -3238,12 +3511,21 @@ function PublicUserProfile({ targetUser, onBack, currentUser, currentProfile, on
                   </>
                 )}
               </button>
+              <button 
+                onClick={handleMessageClick}
+                className="flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-brand-navy text-white font-bold text-sm transition-all shadow-lg active:scale-95"
+              >
+                <MessageCircle size={18} />
+                Message
+              </button>
             </div>
           )}
 
           <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto">
             <div className="text-center">
-              <p className="text-lg font-bold">{targetUser.totalStamps || 0}</p>
+              <p className="text-lg font-bold">
+                {allCards.reduce((acc, c) => acc + (c.current_stamps || 0) + ((c.total_completed_cycles || 0) * 10), 0) || targetUser.totalStamps || 0}
+              </p>
               <p className="text-[10px] text-brand-navy/40 font-bold uppercase">Stamps</p>
             </div>
             <div className="text-center border-x border-brand-navy/5">
