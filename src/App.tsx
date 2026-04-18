@@ -2433,6 +2433,30 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
 
       {activeSubTab === 'posts' && (
         <div className="space-y-6">
+          {/* Write to wall — always at top */}
+          <div className="glass-card p-5 rounded-[2rem] space-y-4">
+            <h3 className="font-bold text-sm px-1">Post to Wall</h3>
+            <textarea
+              value={newPost}
+              onChange={(e) => setNewPost(e.target.value)}
+              placeholder="What's on your mind?"
+              className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm h-20 resize-none"
+            />
+            <button
+              onClick={handlePostOnWall}
+              disabled={isPosting || !newPost.trim()}
+              className="w-full bg-brand-navy text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
+            >
+              <Plus size={16} /> Post
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {wallPosts.map(post => (
+              <WallPostItem key={post.id} post={post} currentUser={user} />
+            ))}
+          </div>
+
           {/* Global feed posts */}
           {myGlobalPosts.length > 0 && (
             <div className="space-y-4">
@@ -2462,30 +2486,6 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
               ))}
             </div>
           )}
-
-          {/* Wall posts */}
-          <div className="glass-card p-5 rounded-[2rem] space-y-4">
-            <h3 className="font-bold text-sm px-1">Post to Wall</h3>
-            <textarea
-              value={newPost}
-              onChange={(e) => setNewPost(e.target.value)}
-              placeholder="What's on your mind?"
-              className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm h-20 resize-none"
-            />
-            <button
-              onClick={handlePostOnWall}
-              disabled={isPosting || !newPost.trim()}
-              className="w-full bg-brand-navy text-white py-3 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 text-sm"
-            >
-              <Plus size={16} /> Post
-            </button>
-          </div>
-
-          <div className="space-y-3">
-            {wallPosts.map(post => (
-              <WallPostItem key={post.id} post={post} currentUser={user} />
-            ))}
-          </div>
 
           {myGlobalPosts.length === 0 && wallPosts.length === 0 && (
             <div className="py-20 text-center text-brand-navy/20">
