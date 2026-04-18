@@ -3682,10 +3682,11 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [chatPartner, setChatPartner] = useState<UserProfile | null>(null);
+  const [selectedMsgId, setSelectedMsgId] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query(
-      collection(db, 'chats'), 
+      collection(db, 'chats'),
       where('uids', 'array-contains', currentUser.uid),
       orderBy('lastActivity', 'desc')
     );
@@ -3701,26 +3702,23 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
       return;
     }
 
+    // Fetch partner directly from Firestore — don't depend on chats state (async race)
+    getDoc(doc(db, 'chats', activeChatId)).then(async (chatSnap) => {
+      if (!chatSnap.exists()) return;
+      const partnerUid = (chatSnap.data().uids as string[]).find(id => id !== currentUser.uid);
+      if (!partnerUid) return;
+      const userSnap = await getDoc(doc(db, 'users', partnerUid));
+      if (userSnap.exists()) setChatPartner({ uid: userSnap.id, ...userSnap.data() } as UserProfile);
+    });
+
     const q = query(
       collection(db, 'chats', activeChatId, 'messages'),
       orderBy('createdAt', 'asc')
     );
-    
-    // Fetch chat partner profile
-    const chat = chats.find(c => c.id === activeChatId);
-    if (chat) {
-      const partnerUid = chat.uids.find(id => id !== currentUser.uid);
-      if (partnerUid) {
-        getDoc(doc(db, 'users', partnerUid)).then(snap => {
-          if (snap.exists()) setChatPartner({ uid: snap.id, ...snap.data() } as UserProfile);
-        });
-      }
-    }
-
     return onSnapshot(q, (snap) => {
       setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage)));
     });
-  }, [activeChatId, currentUser.uid, chats]);
+  }, [activeChatId, currentUser.uid]);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !activeChatId) return;
@@ -3787,18 +3785,41 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-6 py-8 space-y-4">
+        <div className="flex-1 overflow-y-auto px-6 py-8 space-y-4" onClick={() => setSelectedMsgId(null)}>
           {messages.map((msg, idx) => {
             const isMe = msg.senderUid === currentUser.uid;
             const showName = idx === 0 || messages[idx-1].senderUid !== msg.senderUid;
+            const isSelected = selectedMsgId === msg.id;
             return (
               <div key={msg.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
                 {showName && !isMe && <span className="text-[10px] font-bold text-brand-navy/40 mb-1 ml-2">{msg.senderName}</span>}
-                <div className={cn(
-                  "max-w-[80%] p-4 rounded-3xl text-sm shadow-sm",
-                  isMe ? "bg-brand-navy text-white rounded-tr-none" : "glass-card text-brand-navy rounded-tl-none"
-                )}>
-                  {msg.text}
+                <div
+                  className={cn("flex items-end gap-2", isMe ? "flex-row-reverse" : "flex-row")}
+                  onClick={e => { e.stopPropagation(); if (isMe) setSelectedMsgId(isSelected ? null : msg.id); }}
+                >
+                  <div className={cn(
+                    "max-w-[75%] px-4 py-3 rounded-3xl text-sm shadow-sm",
+                    isMe ? "bg-brand-navy text-white rounded-tr-none" : "glass-card text-brand-navy rounded-tl-none"
+                  )}>
+                    {msg.text}
+                  </div>
+                  <AnimatePresence>
+                    {isSelected && isMe && (
+                      <motion.button
+                        initial={{ opacity: 0, scale: 0.7 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.7 }}
+                        onClick={async e => {
+                          e.stopPropagation();
+                          await deleteDoc(doc(db, 'chats', activeChatId!, 'messages', msg.id));
+                          setSelectedMsgId(null);
+                        }}
+                        className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center shrink-0 mb-0.5"
+                      >
+                        <Trash2 size={13} className="text-red-500" />
+                      </motion.button>
+                    )}
+                  </AnimatePresence>
                 </div>
               </div>
             );

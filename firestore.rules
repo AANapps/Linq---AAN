@@ -153,6 +153,7 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.uids || isAdmin());
         allow create: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.uids || isAdmin());
+        allow delete: if isAuthenticated() && (resource.data.senderUid == request.auth.uid || isAdmin());
       }
     }
   }
