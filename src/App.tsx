@@ -3831,7 +3831,7 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
       <motion.div 
         initial={{ opacity: 0, x: 20 }}
         animate={{ opacity: 1, x: 0 }}
-        className="fixed inset-0 bg-brand-bg z-[100] flex flex-col"
+        className="fixed inset-0 bg-brand-bg z-[100] flex flex-col max-w-md mx-auto"
       >
         <header className="glass-panel px-6 py-4 flex items-center gap-4">
           <button onClick={() => setActiveChatId(null)} className="p-2 -ml-2 text-brand-navy/60">
