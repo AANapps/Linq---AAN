@@ -263,6 +263,7 @@ export default function App() {
   const [userCards, setUserCards] = useState<Card[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showCreatePost, setShowCreatePost] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadMessages, setUnreadMessages] = useState(0);
 
@@ -587,11 +588,11 @@ export default function App() {
           <h1 className="font-display font-bold text-xl tracking-tight"><span className="text-brand-gold">Li</span>nq</h1>
         </button>
         <button
-          onClick={() => { setActiveTab('for-you'); setViewingStore(null); setViewingUser(null); }}
+          onClick={() => setShowNotifications(true)}
           className="relative w-9 h-9 flex items-center justify-center text-brand-navy/60 hover:text-brand-navy transition-colors"
         >
           <Bell className="w-6 h-6" />
-          {notifications.length > 0 && (
+          {notifications.filter(n => !n.isRead).length > 0 && (
             <span className="absolute top-1 right-1 w-2 h-2 bg-brand-gold rounded-full border-2 border-white" />
           )}
         </button>
@@ -665,6 +666,16 @@ export default function App() {
             profile={profile}
             userCards={userCards}
             onLogout={handleLogout}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Notifications Panel */}
+      <AnimatePresence>
+        {showNotifications && (
+          <NotificationsPanel
+            notifications={notifications}
+            onClose={() => setShowNotifications(false)}
           />
         )}
       </AnimatePresence>
@@ -829,7 +840,7 @@ function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onVi
       exit={{ opacity: 0, x: -20 }}
     >
       {activeTab === 'for-you' && (
-        <ForYouScreen onViewUser={onViewUser} onViewStore={onViewStore} notifications={notifications} currentUser={user} currentProfile={profile} />
+        <ForYouScreen onViewUser={onViewUser} onViewStore={onViewStore} currentUser={user} currentProfile={profile} />
       )}
 
       {activeTab === 'messages' && (
@@ -1085,7 +1096,7 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
       exit={{ opacity: 0, x: -20 }}
     >
       {activeTab === 'for-you' && (
-        <ForYouScreen onViewUser={onViewUser} notifications={notifications} currentUser={user} currentProfile={profile} />
+        <ForYouScreen onViewUser={onViewUser} currentUser={user} currentProfile={profile} />
       )}
 
       {activeTab === 'messages' && (
@@ -3402,13 +3413,105 @@ function CreatePostModal({ onClose, user, profile }: { onClose: () => void, user
   );
 }
 
-function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, currentProfile }: { onViewUser: (u: UserProfile) => void, onViewStore?: (s: StoreProfile) => void, notifications: Notification[], currentUser?: FirebaseUser, currentProfile?: UserProfile | null }) {
+function NotificationsPanel({ notifications, onClose }: { notifications: Notification[], onClose: () => void }) {
+  const unreadCount = notifications.filter(n => !n.isRead).length;
+
+  const markAsRead = async (id: string) => {
+    await updateDoc(doc(db, 'notifications', id), { isRead: true });
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ x: '100%' }}
+        animate={{ x: 0 }}
+        exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+        className="absolute right-0 top-0 bottom-0 w-full max-w-md bg-brand-bg shadow-2xl flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-5 border-b border-black/5">
+          <div>
+            <h2 className="font-display text-xl font-bold">Notifications</h2>
+            {unreadCount > 0 && (
+              <p className="text-xs text-brand-gold font-bold">{unreadCount} unread</p>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="w-9 h-9 rounded-2xl bg-brand-navy/5 flex items-center justify-center hover:bg-brand-navy/10 transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* List */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+          {notifications.map(notif => (
+            <div
+              key={notif.id}
+              onClick={() => { if (!notif.isRead) markAsRead(notif.id); }}
+              className={cn(
+                "bg-white rounded-[1.5rem] p-4 flex items-center gap-3 transition-all",
+                !notif.isRead ? "ring-2 ring-brand-gold/30 cursor-pointer shadow-sm" : "opacity-75"
+              )}
+            >
+              <div className="w-11 h-11 rounded-xl overflow-hidden border border-brand-navy/5 relative bg-brand-gold/10 flex items-center justify-center shrink-0">
+                {notif.fromPhoto ? (
+                  <img src={notif.fromPhoto} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <Sparkles size={18} className="text-brand-gold" />
+                )}
+                <div className={cn("absolute -bottom-1 -right-1 p-1 rounded-md border-2 border-white", notif.type === 'like' ? "bg-red-400" : notif.type === 'comment' ? "bg-blue-400" : "bg-brand-gold")}>
+                  {notif.type === 'follow' ? <UserPlus size={9} className="text-white" /> : notif.type === 'like' ? <Heart size={9} className="text-white fill-white" /> : notif.type === 'comment' ? <MessageCircle size={9} className="text-white" /> : <Bell size={9} className="text-white" />}
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm line-clamp-2 leading-snug">
+                  {notif.type === 'system'
+                    ? notif.message
+                    : <><span className="font-bold">{notif.fromName}</span> {notif.type === 'follow' ? 'started following you!' : notif.message}</>
+                  }
+                </p>
+                <p className="text-[10px] text-brand-navy/40 font-bold uppercase tracking-widest mt-0.5">
+                  {notif.createdAt ? format(notif.createdAt.toDate(), 'MMM d, h:mm a') : 'Just now'}
+                </p>
+              </div>
+              <button
+                onClick={async e => { e.stopPropagation(); await deleteDoc(doc(db, 'notifications', notif.id)); }}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-brand-navy/20 hover:text-red-400 hover:bg-red-50 transition-all shrink-0"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          {notifications.length === 0 && (
+            <div className="py-24 text-center text-brand-navy/20">
+              <Bell size={48} className="mx-auto mb-4 opacity-10" />
+              <p className="font-bold">All caught up!</p>
+              <p className="text-sm mt-1">No notifications yet</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: { onViewUser: (u: UserProfile) => void, onViewStore?: (s: StoreProfile) => void, currentUser?: FirebaseUser, currentProfile?: UserProfile | null }) {
   const [globalPosts, setGlobalPosts] = useState<GlobalPost[]>([]);
   const [vendorPosts, setVendorPosts] = useState<any[]>([]);
   const [followingUids, setFollowingUids] = useState<Set<string>>(new Set());
   const [followingStoreIds, setFollowingStoreIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<'all' | 'following' | 'notifications'>('all');
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'following'>('all');
 
   useEffect(() => {
     const unsubGlobal = onSnapshot(
@@ -3442,10 +3545,6 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
       setFollowingStoreIds(new Set(snap.docs.map(d => d.data().storeId as string)));
     }, () => {});
   }, [currentUser?.uid]);
-
-  const markAsRead = async (id: string) => {
-    await updateDoc(doc(db, 'notifications', id), { isRead: true });
-  };
 
   const handleLike = async (post: GlobalPost) => {
     if (!currentUser) return;
@@ -3507,22 +3606,17 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
   return (
     <div className="space-y-5 pb-20">
       <div className="flex p-1 glass-card rounded-2xl">
-        {(['all', 'following', 'notifications'] as const).map(tab => (
+        {(['all', 'following'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveSubTab(tab)}
             className={cn(
-              "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 relative",
+              "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5",
               activeSubTab === tab ? "bg-brand-navy text-white shadow-lg" : "text-brand-navy/40"
             )}
           >
-            {tab === 'all' && <Zap size={13} />}
-            {tab === 'following' && <Users size={13} />}
-            {tab === 'notifications' && <Bell size={13} />}
-            {tab === 'all' ? 'All' : tab === 'following' ? 'Following' : 'Alerts'}
-            {tab === 'notifications' && notifications.filter(n => !n.isRead).length > 0 && (
-              <span className="w-1.5 h-1.5 bg-brand-gold rounded-full animate-pulse" />
-            )}
+            {tab === 'all' ? <Zap size={13} /> : <Users size={13} />}
+            {tab === 'all' ? 'All' : 'Following'}
           </button>
         ))}
       </div>
@@ -3532,52 +3626,6 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
           <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
             <Sparkles className="w-8 h-8 text-brand-gold" />
           </motion.div>
-        </div>
-      ) : activeSubTab === 'notifications' ? (
-        <div className="space-y-3">
-          {notifications.map(notif => (
-            <div
-              key={notif.id}
-              onClick={() => { if (!notif.isRead) markAsRead(notif.id); }}
-              className={cn(
-                "glass-card p-5 rounded-[2rem] flex items-center justify-between transition-all",
-                !notif.isRead ? "ring-2 ring-brand-gold/30 cursor-pointer hover:shadow-md" : "opacity-80"
-              )}
-            >
-              <div className="flex items-center gap-4 flex-1 min-w-0">
-                <div className="w-12 h-12 rounded-2xl overflow-hidden border border-brand-navy/5 relative bg-brand-gold/10 flex items-center justify-center shrink-0">
-                  {notif.fromPhoto ? (
-                    <img src={notif.fromPhoto} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <Sparkles size={20} className="text-brand-gold" />
-                  )}
-                  <div className={cn("absolute -bottom-1 -right-1 p-1 rounded-lg border-2 border-white", notif.type === 'like' ? "bg-red-400" : notif.type === 'comment' ? "bg-blue-400" : "bg-brand-gold")}>
-                    {notif.type === 'follow' ? <UserPlus size={10} className="text-white" /> : notif.type === 'like' ? <Heart size={10} className="text-white fill-white" /> : notif.type === 'comment' ? <MessageCircle size={10} className="text-white" /> : <Bell size={10} className="text-white" />}
-                  </div>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm line-clamp-2">
-                    {notif.type === 'system' ? notif.message : <><span className="font-bold">{notif.fromName}</span> {notif.type === 'follow' ? 'started following you!' : notif.message}</>}
-                  </p>
-                  <p className="text-[10px] text-brand-navy/40 font-bold uppercase tracking-widest mt-1">
-                    {notif.createdAt ? format(notif.createdAt.toDate(), 'MMM d, h:mm a') : 'Just now'}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={async (e) => { e.stopPropagation(); await deleteDoc(doc(db, 'notifications', notif.id)); }}
-                className="ml-3 w-7 h-7 rounded-xl flex items-center justify-center text-brand-navy/20 hover:text-red-400 hover:bg-red-50 transition-all shrink-0"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ))}
-          {notifications.length === 0 && (
-            <div className="py-20 text-center text-brand-navy/20">
-              <Bell size={64} className="mx-auto mb-4 opacity-10" />
-              <p className="font-bold">All caught up!</p>
-            </div>
-          )}
         </div>
       ) : (
         <div className="space-y-4">
