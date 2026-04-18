@@ -255,6 +255,7 @@ interface GlobalPost {
   authorRole: 'consumer' | 'vendor';
   storeId?: string;
   storeName?: string;
+  wallPost?: boolean;
   content: string;
   postType: 'post' | 'poll';
   pollOptions?: { text: string }[];
@@ -3575,11 +3576,16 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onLike, o
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <p className="font-bold text-sm">{authorProfile?.name || post.authorName}</p>
-              {post.authorRole === 'vendor' && (
+              <p className="font-bold text-sm">
+                {authorProfile?.name || post.authorName}
+                {post.wallPost && post.storeName && (
+                  <span className="font-normal text-brand-navy/40"> › {post.storeName}</span>
+                )}
+              </p>
+              {post.authorRole === 'vendor' && !post.wallPost && (
                 <span className="px-2 py-0.5 bg-brand-gold/10 rounded-full text-[9px] font-bold text-brand-gold uppercase tracking-wide">Vendor</span>
               )}
-              {post.storeName && (
+              {!post.wallPost && post.storeName && (
                 <span className="text-[10px] text-brand-navy/40">· {post.storeName}</span>
               )}
             </div>
@@ -4172,7 +4178,8 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: 
   const followingFeed = sortedFeed.filter(p => {
     const uid = p.authorUid || p._authorUid;
     if (uid && followingUids.has(uid)) return true;
-    if (p.storeId && followingStoreIds.has(p.storeId)) return true;
+    const sid = p.storeId || p.store_id;
+    if (sid && followingStoreIds.has(sid)) return true;
     return false;
   });
 
@@ -4942,15 +4949,39 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
     if (!newPost.trim() || !profile) return;
     setIsPosting(true);
     try {
+      const content = newPost.trim();
+      const authorName = profile.name || profile.email?.split('@')[0] || 'Anonymous';
+      const authorPhoto = profile.photoURL || '';
+
+      // Write to store subcollection for the business wall
       await addDoc(collection(db, 'stores', store.id, 'posts'), {
         store_id: store.id,
         authorUid: profile.uid,
-        authorName: profile.name || profile.email?.split('@')[0] || 'Anonymous',
-        authorPhoto: profile.photoURL || '',
-        content: newPost,
+        authorName,
+        authorPhoto,
+        content,
+        storeName: store.name,
+        wallPost: true,
         createdAt: serverTimestamp(),
         likesCount: 0
       });
+
+      // Also publish to global_posts so followers see it in their feed
+      await addDoc(collection(db, 'global_posts'), {
+        authorUid: profile.uid,
+        authorName,
+        authorPhoto,
+        authorRole: profile.role || 'consumer',
+        storeId: store.id,
+        storeName: store.name,
+        wallPost: true,
+        content,
+        postType: 'post',
+        createdAt: serverTimestamp(),
+        likesCount: 0,
+        likedBy: [],
+      });
+
       setNewPost('');
     } catch (error) {
       console.error(error);
@@ -5167,7 +5198,7 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
                   <img src={post.authorPhoto} alt="" className="w-full h-full object-cover" />
                 </div>
                 <div>
-                  <p 
+                  <p
                     className="font-bold text-sm cursor-pointer hover:text-brand-gold transition-colors"
                     onClick={async () => {
                       const uq = query(collection(db, 'users'), where('uid', '==', post.authorUid));
@@ -5178,6 +5209,7 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
                     }}
                   >
                     {post.authorName}
+                    <span className="font-normal text-brand-navy/40"> › {store.name}</span>
                   </p>
                   <p className="text-[10px] text-brand-navy/40 font-bold uppercase tracking-widest">
                     {post.createdAt ? format(post.createdAt.toDate(), 'MMM d, h:mm a') : 'Just now'}
