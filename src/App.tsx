@@ -3692,6 +3692,7 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
   const [showCustomerPicker, setShowCustomerPicker] = useState(false);
   const [storeCustomers, setStoreCustomers] = useState<UserProfile[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const q = query(
@@ -3741,7 +3742,8 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
   }, [activeChatId, currentUser.uid]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   useEffect(() => {
@@ -3849,21 +3851,21 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
           </button>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-4 py-8 space-y-2" onClick={() => setSelectedMsgId(null)}>
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4 space-y-2" onClick={() => setSelectedMsgId(null)}>
           {messages.map((msg, idx) => {
             const isMe = msg.senderUid === currentUser.uid;
             const showName = idx === 0 || messages[idx-1].senderUid !== msg.senderUid;
             const isSelected = selectedMsgId === msg.id;
             return (
-              <div key={msg.id} className="w-full">
-                {showName && !isMe && <span className="text-[10px] font-bold text-brand-navy/40 mb-1 ml-2 block">{msg.senderName}</span>}
+              <div key={msg.id} className="w-full px-2">
+                {showName && !isMe && <span className="text-[10px] font-bold text-brand-navy/40 mb-1 ml-1 block">{msg.senderName}</span>}
                 <div
-                  className={cn("flex items-end gap-2", isMe ? "flex-row-reverse" : "flex-row")}
+                  className={cn("flex items-end gap-2 w-full", isMe ? "flex-row-reverse" : "flex-row")}
                   onClick={e => { e.stopPropagation(); if (isMe) setSelectedMsgId(isSelected ? null : msg.id); }}
                 >
                   <div className={cn(
-                    "flex-1 px-4 py-3 rounded-3xl text-sm shadow-sm",
-                    isMe ? "bg-brand-navy text-white rounded-tr-none" : "glass-card text-brand-navy rounded-tl-none"
+                    "flex-1 px-4 py-3 rounded-2xl text-sm shadow-sm",
+                    isMe ? "bg-brand-navy text-white" : "glass-card text-brand-navy"
                   )}>
                     {msg.text}
                   </div>
@@ -3888,7 +3890,6 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
               </div>
             );
           })}
-          <div ref={messagesEndRef} />
         </div>
 
         <div className="p-6 bg-white border-t border-brand-navy/5">
