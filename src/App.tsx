@@ -24,6 +24,7 @@ import {
   deleteDoc,
   serverTimestamp,
   getDocs,
+  getDocsFromServer,
   addDoc,
   orderBy,
   limit,
@@ -328,7 +329,7 @@ export default function App() {
     if (!user) return;
     const seedDemoPosts = async () => {
       try {
-        const snap = await getDocs(query(collection(db, 'global_posts'), limit(1)));
+        const snap = await getDocsFromServer(query(collection(db, 'global_posts'), limit(1)));
         if (!snap.empty) return;
 
         const users = [
@@ -1983,11 +1984,12 @@ function CardBuilder({ store }: { store: StoreProfile | null }) {
 }
 
 function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { profile: UserProfile | null, userCards: Card[], onLogout: () => void, onViewUser: (u: UserProfile) => void, user: FirebaseUser }) {
-  const [activeSubTab, setActiveSubTab] = useState<'following' | 'wall'>('wall');
+  const [activeSubTab, setActiveSubTab] = useState<'posts' | 'wall' | 'following'>('posts');
   const [following, setFollowing] = useState<UserProfile[]>([]);
   const [followers, setFollowers] = useState<UserProfile[]>([]);
   const [showFollowModal, setShowFollowModal] = useState(false);
   const [posts, setPosts] = useState<any[]>([]);
+  const [myGlobalPosts, setMyGlobalPosts] = useState<GlobalPost[]>([]);
   const [newPost, setNewPost] = useState('');
   const [rating, setRating] = useState(5);
   const [isPosting, setIsPosting] = useState(false);
@@ -2022,10 +2024,16 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
       setPosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
+    const gq = query(collection(db, 'global_posts'), where('authorUid', '==', profile.uid), orderBy('createdAt', 'desc'));
+    const unsubGlobalPosts = onSnapshot(gq, (snap) => {
+      setMyGlobalPosts(snap.docs.map(d => ({ id: d.id, ...d.data() } as GlobalPost)));
+    });
+
     return () => {
       unsubFollowing();
       unsubFollowers();
       unsubPosts();
+      unsubGlobalPosts();
     };
   }, [profile?.uid]);
 
@@ -2082,6 +2090,12 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
 
       <div className="flex p-1 glass-card rounded-2xl">
         <button
+          onClick={() => setActiveSubTab('posts')}
+          className={cn("flex-1 py-3 rounded-xl text-xs font-bold transition-all", activeSubTab === 'posts' ? "bg-brand-navy text-white shadow-lg" : "text-brand-navy/40")}
+        >
+          Posts
+        </button>
+        <button
           onClick={() => setActiveSubTab('wall')}
           className={cn("flex-1 py-3 rounded-xl text-xs font-bold transition-all", activeSubTab === 'wall' ? "bg-brand-navy text-white shadow-lg" : "text-brand-navy/40")}
         >
@@ -2094,6 +2108,43 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
           Following
         </button>
       </div>
+
+      {activeSubTab === 'posts' && (
+        <div className="space-y-4">
+          {myGlobalPosts.length === 0 ? (
+            <div className="py-20 text-center text-brand-navy/20">
+              <MessageSquare size={64} className="mx-auto mb-4 opacity-5" />
+              <p className="font-bold">No posts yet</p>
+              <p className="text-xs">Use the + button to share something!</p>
+            </div>
+          ) : (
+            myGlobalPosts.map(post => (
+              <FeedPostCard
+                key={post.id}
+                post={post}
+                currentUser={user}
+                onViewUser={onViewUser}
+                onLike={async (p) => {
+                  const ref = doc(db, 'global_posts', p.id);
+                  const liked = (p.likedBy || []).includes(user.uid);
+                  await updateDoc(ref, {
+                    likedBy: liked ? arrayRemove(user.uid) : arrayUnion(user.uid),
+                    likesCount: liked ? Math.max(0, p.likesCount - 1) : p.likesCount + 1
+                  });
+                }}
+                onVote={async (p, idx) => {
+                  const ref = doc(db, 'global_posts', p.id);
+                  const votes = p.pollVotes || {};
+                  const oldKey = Object.keys(votes).find(k => (votes[k] || []).includes(user.uid));
+                  const updates: any = { [`pollVotes.${idx}`]: arrayUnion(user.uid) };
+                  if (oldKey !== undefined && oldKey !== String(idx)) updates[`pollVotes.${oldKey}`] = arrayRemove(user.uid);
+                  await updateDoc(ref, updates);
+                }}
+              />
+            ))
+          )}
+        </div>
+      )}
 
       {activeSubTab === 'wall' && (
         <div className="space-y-6">
@@ -2761,11 +2812,12 @@ function ProfileLink({ icon, label, onClick }: { icon: React.ReactNode, label: s
 // --- Social & Community Components ---
 
 function FeedPostCard({ post, currentUser, onViewUser, onLike, onVote }: {
+  key?: React.Key;
   post: GlobalPost;
   currentUser?: FirebaseUser;
   onViewUser: (u: UserProfile) => void;
-  onLike: (post: GlobalPost) => void;
-  onVote: (post: GlobalPost, optionIndex: number) => void;
+  onLike: (post: GlobalPost) => void | Promise<void>;
+  onVote: (post: GlobalPost, optionIndex: number) => void | Promise<void>;
 }) {
   const [showInteractions, setShowInteractions] = useState(false);
   const isLiked = currentUser ? (post.likedBy || []).includes(currentUser.uid) : false;
