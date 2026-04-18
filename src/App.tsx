@@ -3432,6 +3432,13 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onLike, o
   const [newComment, setNewComment] = useState('');
   const [isCommenting, setIsCommenting] = useState(false);
   const [reportSent, setReportSent] = useState(false);
+  const [authorProfile, setAuthorProfile] = useState<{ name: string; photoURL: string } | null>(null);
+
+  useEffect(() => {
+    return onSnapshot(doc(db, 'users', post.authorUid), (snap) => {
+      if (snap.exists()) setAuthorProfile({ name: snap.data().name, photoURL: snap.data().photoURL });
+    }, () => {});
+  }, [post.authorUid]);
 
   const isLiked = currentUser ? (post.likedBy || []).includes(currentUser.uid) : false;
   const isOwn = currentUser?.uid === post.authorUid;
@@ -3522,11 +3529,11 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onLike, o
       <div className="px-5 pt-5 pb-3 space-y-3">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full overflow-hidden border border-black/5 cursor-pointer shrink-0" onClick={handleAvatarClick}>
-            <img src={post.authorPhoto || `https://i.pravatar.cc/40?u=${post.authorUid}`} alt="" className="w-full h-full object-cover" />
+            <img src={authorProfile?.photoURL || post.authorPhoto || `https://i.pravatar.cc/40?u=${post.authorUid}`} alt="" className="w-full h-full object-cover" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5 flex-wrap">
-              <p className="font-bold text-sm">{post.authorName}</p>
+              <p className="font-bold text-sm">{authorProfile?.name || post.authorName}</p>
               {post.authorRole === 'vendor' && (
                 <span className="px-2 py-0.5 bg-brand-gold/10 rounded-full text-[9px] font-bold text-brand-gold uppercase tracking-wide">Vendor</span>
               )}
@@ -4005,7 +4012,7 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: 
 
   useEffect(() => {
     const unsubGlobal = onSnapshot(
-      query(collection(db, 'global_posts'), orderBy('createdAt', 'desc'), limit(40)),
+      query(collection(db, 'global_posts'), orderBy('createdAt', 'desc'), limit(15)),
       (snap) => {
         setGlobalPosts(snap.docs.map(d => ({ id: d.id, ...d.data() } as GlobalPost)));
         setLoading(false);
@@ -4218,17 +4225,20 @@ function MessagesScreen({ currentUser, currentProfile, activeChatId, setActiveCh
 
     const q = query(
       collection(db, 'chats', activeChatId, 'messages'),
-      orderBy('createdAt', 'asc')
+      orderBy('createdAt', 'desc'),
+      limit(15)
     );
     return onSnapshot(q, (snap) => {
-      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage)));
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as ChatMessage)).reverse());
     });
   }, [activeChatId, currentUser.uid]);
 
   useEffect(() => {
     const el = scrollContainerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+    if (!el) return;
+    const t = setTimeout(() => { el.scrollTop = el.scrollHeight; }, 0);
+    return () => clearTimeout(t);
+  }, [messages, activeChatId]);
 
   useEffect(() => {
     if (!vendorStore) return;
