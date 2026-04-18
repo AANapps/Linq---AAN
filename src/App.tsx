@@ -72,7 +72,9 @@ import {
   MoreVertical,
   Trash2,
   BarChart2,
-  Image
+  Image,
+  Flag,
+  ChevronDown
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
@@ -178,7 +180,7 @@ interface Notification {
   fromUid: string;
   fromName: string;
   fromPhoto: string;
-  type: 'follow' | 'system' | 'like' | 'mention';
+  type: 'follow' | 'system' | 'like' | 'comment';
   message: string;
   isRead: boolean;
   createdAt: any;
@@ -262,6 +264,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showCreatePost, setShowCreatePost] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [unreadMessages, setUnreadMessages] = useState(0);
 
   // Listen to user's cards globally to sync stats
   useEffect(() => {
@@ -275,22 +278,63 @@ export default function App() {
     }, (error) => console.error("Global cards listener:", error));
   }, [user]);
 
-  // Listen to notifications
+  // Listen to ALL notifications (shown in feed); badge count tracks unread separately
   useEffect(() => {
     if (!user) {
       setNotifications([]);
       return;
     }
     const q = query(
-      collection(db, 'notifications'), 
-      where('toUid', '==', user.uid), 
-      where('isRead', '==', false), 
-      orderBy('createdAt', 'desc')
+      collection(db, 'notifications'),
+      where('toUid', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(50)
     );
     return onSnapshot(q, (snap) => {
       setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
     }, (error) => console.error("Notifications listener:", error));
   }, [user]);
+
+  // Listen to unread message count via chats
+  useEffect(() => {
+    if (!user) { setUnreadMessages(0); return; }
+    const q = query(collection(db, 'chats'), where('uids', 'array-contains', user.uid));
+    return onSnapshot(q, (snap) => {
+      const total = snap.docs.reduce((sum, d) => {
+        const uc = d.data().unreadCount || {};
+        return sum + (uc[user.uid] || 0);
+      }, 0);
+      setUnreadMessages(total);
+    }, () => {});
+  }, [user]);
+
+  // Daily stamp reminder — fires once per day per device
+  useEffect(() => {
+    if (!user || userCards.length === 0) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const key = `stamp_reminder_${user.uid}_${today}`;
+    if (localStorage.getItem(key)) return;
+    const activeCards = userCards.filter(c => !c.isArchived);
+    if (activeCards.length === 0) return;
+    const stampedToday = activeCards.some(c => {
+      if (!c.last_tap_timestamp) return false;
+      const ts = c.last_tap_timestamp.toDate?.() || new Date(c.last_tap_timestamp);
+      return ts.toISOString().slice(0, 10) === today;
+    });
+    if (!stampedToday) {
+      localStorage.setItem(key, '1');
+      addDoc(collection(db, 'notifications'), {
+        toUid: user.uid,
+        fromUid: 'system',
+        fromName: 'Linq',
+        fromPhoto: '',
+        type: 'system',
+        message: `Don't forget to collect your stamps today! You have ${activeCards.length} active card${activeCards.length > 1 ? 's' : ''}.`,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      }).catch(() => {});
+    }
+  }, [user, userCards]);
 
   // Listen to profile changes
   useEffect(() => {
@@ -643,13 +687,14 @@ export default function App() {
           onClick={() => { setActiveTab('for-you'); setViewingStore(null); setViewingUser(null); }}
           icon={<Zap />}
           label="For You"
-          badgeCount={notifications.length}
+          badgeCount={notifications.filter(n => !n.isRead).length}
         />
-        <NavButton 
-          active={activeTab === 'messages'} 
+        <NavButton
+          active={activeTab === 'messages'}
           onClick={() => { setActiveTab('messages'); setViewingStore(null); setViewingUser(null); }}
           icon={<MessageCircle />}
           label="Messages"
+          badgeCount={unreadMessages}
         />
         <NavButton 
           active={activeTab === 'home'} 
@@ -1274,13 +1319,30 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
   };
 
   const handleArchive = async () => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || !store) return;
     setIsArchiving(true);
     try {
-      await updateDoc(doc(db, 'cards', card.id), {
+      // Create an archived record for the history/archive list
+      await addDoc(collection(db, 'cards'), {
+        user_id: card.user_id,
+        store_id: card.store_id,
+        current_stamps: limit,
+        total_completed_cycles: card.total_completed_cycles,
+        last_tap_timestamp: serverTimestamp(),
+        isArchived: true,
         isRedeemed: true,
-        isArchived: false, // Keep in wallet as per request
-        last_tap_timestamp: serverTimestamp()
+        archivedAt: serverTimestamp(),
+      });
+      // Reset the active card for the next loyalty cycle
+      await updateDoc(doc(db, 'cards', card.id), {
+        current_stamps: 0,
+        isRedeemed: false,
+        isArchived: false,
+        last_tap_timestamp: serverTimestamp(),
+      });
+      // Increment rewards counter on profile
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        totalRedeemed: increment(1),
       });
       setShowCompletionPopup(false);
     } catch (error) {
@@ -1988,6 +2050,7 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
   const [following, setFollowing] = useState<UserProfile[]>([]);
   const [followers, setFollowers] = useState<UserProfile[]>([]);
   const [showFollowModal, setShowFollowModal] = useState(false);
+  const [followModalTab, setFollowModalTab] = useState<'following' | 'followers'>('following');
   const [wallPosts, setWallPosts] = useState<any[]>([]);
   const [myGlobalPosts, setMyGlobalPosts] = useState<GlobalPost[]>([]);
   const [likedPosts, setLikedPosts] = useState<GlobalPost[]>([]);
@@ -2094,10 +2157,10 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatSquare icon={<CheckCircle2 className="text-brand-gold" />} label="Stamps" value={totalStamps.toString()} />
         <StatSquare icon={<Trophy className="text-brand-gold" />} label="Rewards" value={archivedCardsCount.toString()} />
-        <div onClick={() => setShowFollowModal(true)} className="cursor-pointer">
+        <div onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }} className="cursor-pointer">
           <StatSquare icon={<Users className="text-brand-gold" />} label="Following" value={following.length.toString()} />
         </div>
-        <div onClick={() => setShowFollowModal(true)} className="cursor-pointer">
+        <div onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }} className="cursor-pointer">
           <StatSquare icon={<UserPlus className="text-brand-gold" />} label="Followers" value={followers.length.toString()} />
         </div>
       </div>
@@ -2260,60 +2323,56 @@ function ProfileScreen({ profile, userCards, onLogout, onViewUser, user }: { pro
 
       <AnimatePresence>
         {showFollowModal && (
-          <Modal title="Following & Followers" onClose={() => setShowFollowModal(false)}>
-            <div className="space-y-6">
-              <div className="space-y-3">
-                <h4 className="text-[10px] font-bold uppercase tracking-widest text-brand-gold px-2">Following ({following.length})</h4>
-                <div className="space-y-2">
-                  {following.map(u => (
-                    <div
-                      key={u.uid}
-                      className="flex items-center justify-between p-4 rounded-3xl bg-brand-bg hover:bg-brand-gold/5 transition-colors cursor-pointer group"
-                      onClick={() => { onViewUser(u); setShowFollowModal(false); }}
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl overflow-hidden border border-brand-navy/5">
-                          <img src={u.photoURL} alt="" className="w-full h-full object-cover" />
-                        </div>
-                        <div>
-                          <p className="font-bold text-brand-navy group-hover:text-brand-gold transition-colors">{u.name}</p>
-                          <p className="text-xs text-brand-navy/40 font-bold tracking-widest uppercase">@{u.email?.split('@')[0]}</p>
-                        </div>
-                      </div>
-                      <ChevronRight size={20} className="text-brand-navy/10 group-hover:text-brand-gold transition-colors" />
-                    </div>
-                  ))}
-                  {following.length === 0 && (
-                    <p className="text-xs text-brand-navy/40 text-center py-6">Not following anyone yet</p>
-                  )}
-                </div>
+          <Modal title={followModalTab === 'following' ? `Following (${following.length})` : `Followers (${followers.length})`} onClose={() => setShowFollowModal(false)}>
+            <div className="space-y-4">
+              <div className="flex p-1 bg-brand-bg rounded-2xl">
+                <button
+                  onClick={() => setFollowModalTab('following')}
+                  className={cn("flex-1 py-2.5 rounded-xl text-xs font-bold transition-all", followModalTab === 'following' ? "bg-brand-navy text-white shadow" : "text-brand-navy/40")}
+                >
+                  Following ({following.length})
+                </button>
+                <button
+                  onClick={() => setFollowModalTab('followers')}
+                  className={cn("flex-1 py-2.5 rounded-xl text-xs font-bold transition-all", followModalTab === 'followers' ? "bg-brand-navy text-white shadow" : "text-brand-navy/40")}
+                >
+                  Followers ({followers.length})
+                </button>
               </div>
 
-              <div className="space-y-3">
-                <h4 className="text-[10px] font-bold uppercase tracking-widest text-brand-navy/40 px-2">Followers ({followers.length})</h4>
-                <div className="space-y-2">
-                  {followers.map(u => (
+              <div className="space-y-2">
+                {(followModalTab === 'following' ? following : followers).map(u => (
+                  <div key={u.uid} className="flex items-center justify-between p-3 rounded-2xl bg-brand-bg hover:bg-brand-gold/5 transition-colors group">
                     <div
-                      key={u.uid}
-                      className="flex items-center justify-between p-4 rounded-3xl bg-brand-bg hover:bg-brand-gold/5 transition-colors cursor-pointer group"
+                      className="flex items-center gap-3 flex-1 cursor-pointer"
                       onClick={() => { onViewUser(u); setShowFollowModal(false); }}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-2xl overflow-hidden border border-brand-navy/5">
-                          <img src={u.photoURL} alt="" className="w-full h-full object-cover" />
-                        </div>
-                        <div>
-                          <p className="font-bold text-brand-navy group-hover:text-brand-gold transition-colors">{u.name}</p>
-                          <p className="text-xs text-brand-navy/40 font-bold tracking-widest uppercase">@{u.email?.split('@')[0]}</p>
-                        </div>
+                      <div className="w-10 h-10 rounded-2xl overflow-hidden border border-brand-navy/5 shrink-0">
+                        <img src={u.photoURL || `https://i.pravatar.cc/40?u=${u.uid}`} alt="" className="w-full h-full object-cover" />
                       </div>
-                      <ChevronRight size={20} className="text-brand-navy/10 group-hover:text-brand-gold transition-colors" />
+                      <div>
+                        <p className="font-bold text-sm group-hover:text-brand-gold transition-colors">{u.name}</p>
+                        <p className="text-[10px] text-brand-navy/40 font-bold uppercase tracking-widest">@{u.email?.split('@')[0]}</p>
+                      </div>
                     </div>
-                  ))}
-                  {followers.length === 0 && (
-                    <p className="text-xs text-brand-navy/40 text-center py-6">No followers yet</p>
-                  )}
-                </div>
+                    {followModalTab === 'following' && (
+                      <button
+                        onClick={async () => {
+                          const followId = `${profile.uid}_${u.uid}`;
+                          await deleteDoc(doc(db, 'follows', followId));
+                        }}
+                        className="px-3 py-1.5 rounded-xl border border-brand-navy/10 text-xs font-bold text-brand-navy/50 hover:border-brand-gold/50 hover:text-brand-gold transition-all ml-2 shrink-0"
+                      >
+                        Unfollow
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {(followModalTab === 'following' ? following : followers).length === 0 && (
+                  <p className="text-xs text-brand-navy/40 text-center py-8">
+                    {followModalTab === 'following' ? 'Not following anyone yet' : 'No followers yet'}
+                  </p>
+                )}
               </div>
             </div>
           </Modal>
@@ -2856,16 +2915,25 @@ function ProfileLink({ icon, label, onClick }: { icon: React.ReactNode, label: s
 
 // --- Social & Community Components ---
 
-function FeedPostCard({ post, currentUser, onViewUser, onLike, onVote }: {
+function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onLike, onVote, onDelete }: {
   key?: React.Key;
   post: GlobalPost;
   currentUser?: FirebaseUser;
+  currentProfile?: UserProfile | null;
   onViewUser: (u: UserProfile) => void;
   onLike: (post: GlobalPost) => void | Promise<void>;
   onVote: (post: GlobalPost, optionIndex: number) => void | Promise<void>;
+  onDelete?: (post: GlobalPost) => void | Promise<void>;
 }) {
-  const [showInteractions, setShowInteractions] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [comments, setComments] = useState<any[]>([]);
+  const [showAllComments, setShowAllComments] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [isCommenting, setIsCommenting] = useState(false);
+  const [reportSent, setReportSent] = useState(false);
+
   const isLiked = currentUser ? (post.likedBy || []).includes(currentUser.uid) : false;
+  const isOwn = currentUser?.uid === post.authorUid;
   const totalVotes = post.postType === 'poll'
     ? Object.values(post.pollVotes || {}).reduce((s, arr) => s + (arr?.length || 0), 0)
     : 0;
@@ -2873,14 +2941,69 @@ function FeedPostCard({ post, currentUser, onViewUser, onLike, onVote }: {
     ? Object.keys(post.pollVotes || {}).find(k => (post.pollVotes![k] || []).includes(currentUser.uid))
     : undefined;
   const likesCount = post.likesCount || 0;
-  const totalEngagement = likesCount + totalVotes;
+
+  useEffect(() => {
+    const q = query(
+      collection(db, 'global_posts', post.id, 'comments'),
+      orderBy('likesCount', 'desc'),
+      orderBy('createdAt', 'asc'),
+      limit(50)
+    );
+    return onSnapshot(q, (snap) => {
+      setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => {});
+  }, [post.id]);
 
   const handleAvatarClick = async () => {
     try {
       const snap = await getDoc(doc(db, 'users', post.authorUid));
       if (snap.exists()) onViewUser({ uid: snap.id, ...snap.data() } as UserProfile);
-    } catch {/* seed users may not exist in users collection */}
+    } catch {/* seed users may not exist */}
   };
+
+  const handleSubmitComment = async () => {
+    if (!currentUser || !newComment.trim()) return;
+    setIsCommenting(true);
+    const text = newComment.trim();
+    try {
+      await addDoc(collection(db, 'global_posts', post.id, 'comments'), {
+        fromUid: currentUser.uid,
+        fromName: currentProfile?.name || currentUser.displayName || 'User',
+        fromPhoto: currentProfile?.photoURL || currentUser.photoURL || '',
+        content: text,
+        likesCount: 0,
+        likedBy: [],
+        createdAt: serverTimestamp(),
+      });
+      if (post.authorUid !== currentUser.uid) {
+        addDoc(collection(db, 'notifications'), {
+          toUid: post.authorUid,
+          fromUid: currentUser.uid,
+          fromName: currentProfile?.name || currentUser.displayName || 'Someone',
+          fromPhoto: currentProfile?.photoURL || currentUser.photoURL || '',
+          type: 'comment',
+          message: `commented: "${text.slice(0, 60)}${text.length > 60 ? '…' : ''}"`,
+          isRead: false,
+          createdAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+      setNewComment('');
+    } finally {
+      setIsCommenting(false);
+    }
+  };
+
+  const handleLikeComment = async (comment: any) => {
+    if (!currentUser) return;
+    const ref = doc(db, 'global_posts', post.id, 'comments', comment.id);
+    const liked = (comment.likedBy || []).includes(currentUser.uid);
+    await updateDoc(ref, {
+      likedBy: liked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
+      likesCount: liked ? Math.max(0, comment.likesCount - 1) : comment.likesCount + 1,
+    });
+  };
+
+  const visibleComments = showAllComments ? comments : comments.slice(0, 2);
 
   return (
     <motion.div
@@ -2908,11 +3031,58 @@ function FeedPostCard({ post, currentUser, onViewUser, onLike, onVote }: {
               {post.createdAt ? format(post.createdAt.toDate(), 'MMM d · h:mm a') : 'Just now'}
             </p>
           </div>
-          {post.postType === 'poll' && (
-            <div className="w-7 h-7 bg-brand-gold/10 rounded-lg flex items-center justify-center shrink-0">
-              <BarChart2 size={14} className="text-brand-gold" />
+          <div className="flex items-center gap-1 shrink-0">
+            {post.postType === 'poll' && (
+              <div className="w-7 h-7 bg-brand-gold/10 rounded-lg flex items-center justify-center">
+                <BarChart2 size={14} className="text-brand-gold" />
+              </div>
+            )}
+            <div className="relative">
+              <button
+                onClick={() => setShowMenu(v => !v)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-brand-navy/30 hover:text-brand-navy/70 hover:bg-brand-bg transition-all"
+              >
+                <MoreVertical size={16} />
+              </button>
+              <AnimatePresence>
+                {showMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: -4 }}
+                    className="absolute right-0 top-8 z-50 bg-white rounded-2xl shadow-xl border border-black/8 overflow-hidden min-w-[150px]"
+                    onMouseLeave={() => setShowMenu(false)}
+                  >
+                    {isOwn && (
+                      <button
+                        onClick={() => { setShowMenu(false); onDelete?.(post); }}
+                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-bold text-red-500 hover:bg-red-50 transition-colors"
+                      >
+                        <Trash2 size={15} /> Delete
+                      </button>
+                    )}
+                    <button
+                      onClick={async () => {
+                        setShowMenu(false);
+                        if (!currentUser) return;
+                        await addDoc(collection(db, 'reports'), {
+                          postId: post.id,
+                          reportedBy: currentUser.uid,
+                          reason: 'User report',
+                          createdAt: serverTimestamp(),
+                        });
+                        setReportSent(true);
+                        setTimeout(() => setReportSent(false), 3000);
+                      }}
+                      className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-bold text-brand-navy/60 hover:bg-brand-bg transition-colors"
+                    >
+                      <Flag size={15} /> {reportSent ? 'Reported!' : 'Report'}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-          )}
+          </div>
         </div>
 
         {post.content && (
@@ -2958,93 +3128,129 @@ function FeedPostCard({ post, currentUser, onViewUser, onLike, onVote }: {
       </div>
 
       {/* Interactions bar */}
-      <div className="px-5 pb-4 border-t border-black/5 pt-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button
-              onClick={() => onLike(post)}
-              className={cn(
-                "flex items-center gap-1.5 transition-all active:scale-95 text-sm font-bold",
-                isLiked ? "text-brand-gold" : "text-brand-navy/30 hover:text-brand-gold"
-              )}
-            >
-              <Heart size={18} className={cn("transition-all", isLiked ? "fill-brand-gold scale-110" : "")} />
-              <span>{likesCount}</span>
-            </button>
-
-            {post.postType === 'poll' && (
-              <div className="flex items-center gap-1.5 text-brand-navy/30 text-sm font-bold">
-                <BarChart2 size={18} />
-                <span>{totalVotes} vote{totalVotes !== 1 ? 's' : ''}</span>
-              </div>
+      <div className="px-5 pb-3 border-t border-black/5 pt-3">
+        <div className="flex items-center gap-4">
+          <button
+            onClick={() => onLike(post)}
+            className={cn(
+              "flex items-center gap-1.5 transition-all active:scale-95 text-sm font-bold",
+              isLiked ? "text-brand-gold" : "text-brand-navy/30 hover:text-brand-gold"
             )}
-          </div>
+          >
+            <Heart size={17} className={cn("transition-all", isLiked ? "fill-brand-gold scale-110" : "")} />
+            <span>{likesCount}</span>
+          </button>
 
-          {totalEngagement > 0 && (
-            <button
-              onClick={() => setShowInteractions(v => !v)}
-              className="flex items-center gap-1.5 text-[11px] font-bold text-brand-navy/30 hover:text-brand-navy/60 transition-colors"
-            >
-              {totalEngagement} interaction{totalEngagement !== 1 ? 's' : ''}
-              <ChevronRight size={12} className={cn("transition-transform", showInteractions && "rotate-90")} />
-            </button>
+          <button
+            onClick={() => setShowAllComments(v => !v)}
+            className="flex items-center gap-1.5 text-sm font-bold text-brand-navy/30 hover:text-brand-navy/60 transition-colors"
+          >
+            <MessageCircle size={17} />
+            <span>{comments.length}</span>
+          </button>
+
+          {post.postType === 'poll' && (
+            <div className="flex items-center gap-1.5 text-brand-navy/30 text-sm font-bold">
+              <BarChart2 size={17} />
+              <span>{totalVotes}</span>
+            </div>
           )}
         </div>
-
-        {/* Expanded interactions panel */}
-        <AnimatePresence>
-          {showInteractions && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="overflow-hidden"
-            >
-              <div className="pt-3 space-y-3">
-                {likesCount > 0 && (
-                  <div>
-                    <p className="text-[10px] font-bold text-brand-navy/40 uppercase tracking-widest mb-1.5">
-                      ❤️ {likesCount} Like{likesCount !== 1 ? 's' : ''}
-                    </p>
-                    <div className="flex -space-x-1.5">
-                      {(post.likedBy || []).slice(0, 8).map((uid, idx) => (
-                        <div key={uid} className="w-6 h-6 rounded-full overflow-hidden border-2 border-white" style={{ zIndex: 8 - idx }}>
-                          <img src={`https://i.pravatar.cc/24?u=${uid}`} alt="" className="w-full h-full object-cover" />
-                        </div>
-                      ))}
-                      {likesCount > 8 && (
-                        <div className="w-6 h-6 rounded-full bg-brand-navy/10 border-2 border-white flex items-center justify-center">
-                          <span className="text-[8px] font-bold text-brand-navy/60">+{likesCount - 8}</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {post.postType === 'poll' && post.pollOptions && totalVotes > 0 && (
-                  <div>
-                    <p className="text-[10px] font-bold text-brand-navy/40 uppercase tracking-widest mb-1.5">
-                      📊 {totalVotes} Vote{totalVotes !== 1 ? 's' : ''}
-                    </p>
-                    <div className="space-y-1">
-                      {post.pollOptions.map((opt, i) => {
-                        const voteCount = (post.pollVotes?.[String(i)] || []).length;
-                        const pct = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
-                        return (
-                          <div key={i} className="flex items-center gap-2 text-xs">
-                            <span className="text-brand-navy/60 font-medium truncate flex-1">{opt.text}</span>
-                            <span className="font-bold text-brand-navy/50 shrink-0">{voteCount} · {pct}%</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
+
+      {/* Comments section */}
+      {(comments.length > 0 || showAllComments) && (
+        <div className="px-5 pb-4 border-t border-black/5 pt-3 space-y-3">
+          {visibleComments.map(comment => {
+            const commentLiked = currentUser ? (comment.likedBy || []).includes(currentUser.uid) : false;
+            return (
+              <div key={comment.id} className="flex gap-2.5">
+                <div className="w-7 h-7 rounded-full overflow-hidden border border-black/5 shrink-0 mt-0.5">
+                  <img src={comment.fromPhoto || `https://i.pravatar.cc/28?u=${comment.fromUid}`} alt="" className="w-full h-full object-cover" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="bg-brand-bg rounded-2xl px-3 py-2">
+                    <p className="text-xs font-bold text-brand-navy mb-0.5">{comment.fromName}</p>
+                    <p className="text-xs text-brand-navy/70 leading-relaxed">{comment.content}</p>
+                  </div>
+                  <div className="flex items-center gap-3 mt-1 px-1">
+                    <button
+                      onClick={() => handleLikeComment(comment)}
+                      className={cn("flex items-center gap-1 text-[10px] font-bold transition-colors", commentLiked ? "text-brand-gold" : "text-brand-navy/30 hover:text-brand-gold")}
+                    >
+                      <Heart size={10} className={commentLiked ? "fill-current" : ""} />
+                      {comment.likesCount > 0 && <span>{comment.likesCount}</span>}
+                    </button>
+                    <span className="text-[10px] text-brand-navy/20">
+                      {comment.createdAt ? format(comment.createdAt.toDate(), 'MMM d') : ''}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+
+          {comments.length > 2 && (
+            <button
+              onClick={() => setShowAllComments(v => !v)}
+              className="flex items-center gap-1 text-xs font-bold text-brand-navy/40 hover:text-brand-gold transition-colors"
+            >
+              <ChevronDown size={14} className={cn("transition-transform", showAllComments && "rotate-180")} />
+              {showAllComments ? 'Show less' : `View all ${comments.length} comments`}
+            </button>
+          )}
+
+          {/* Comment input */}
+          {showAllComments && currentUser && (
+            <div className="flex gap-2 pt-1">
+              <div className="w-7 h-7 rounded-full overflow-hidden border border-black/5 shrink-0">
+                <img src={currentProfile?.photoURL || currentUser.photoURL || `https://i.pravatar.cc/28?u=${currentUser.uid}`} alt="" className="w-full h-full object-cover" />
+              </div>
+              <div className="flex-1 flex gap-2">
+                <input
+                  value={newComment}
+                  onChange={e => setNewComment(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitComment(); } }}
+                  placeholder="Add a comment…"
+                  className="flex-1 bg-brand-bg rounded-2xl px-3 py-2 text-xs border-none focus:outline-none focus:ring-2 focus:ring-brand-gold/20"
+                />
+                <button
+                  onClick={handleSubmitComment}
+                  disabled={!newComment.trim() || isCommenting}
+                  className="w-8 h-8 rounded-xl bg-brand-gold text-white flex items-center justify-center disabled:opacity-40 transition-opacity shrink-0"
+                >
+                  <Send size={13} />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Comment input always visible at bottom when no comments yet */}
+      {comments.length === 0 && !showAllComments && currentUser && (
+        <div className="px-5 pb-4 border-t border-black/5 pt-3 flex gap-2">
+          <div className="w-7 h-7 rounded-full overflow-hidden border border-black/5 shrink-0">
+            <img src={currentProfile?.photoURL || currentUser.photoURL || `https://i.pravatar.cc/28?u=${currentUser.uid}`} alt="" className="w-full h-full object-cover" />
+          </div>
+          <div className="flex-1 flex gap-2">
+            <input
+              value={newComment}
+              onChange={e => setNewComment(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmitComment(); } }}
+              placeholder="Add a comment…"
+              className="flex-1 bg-brand-bg rounded-2xl px-3 py-2 text-xs border-none focus:outline-none focus:ring-2 focus:ring-brand-gold/20"
+            />
+            <button
+              onClick={handleSubmitComment}
+              disabled={!newComment.trim() || isCommenting}
+              className="w-8 h-8 rounded-xl bg-brand-gold text-white flex items-center justify-center disabled:opacity-40 transition-opacity shrink-0"
+            >
+              <Send size={13} />
+            </button>
+          </div>
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -3219,6 +3425,7 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
   const [globalPosts, setGlobalPosts] = useState<GlobalPost[]>([]);
   const [vendorPosts, setVendorPosts] = useState<any[]>([]);
   const [followingUids, setFollowingUids] = useState<Set<string>>(new Set());
+  const [followingStoreIds, setFollowingStoreIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [activeSubTab, setActiveSubTab] = useState<'all' | 'following' | 'notifications'>('all');
 
@@ -3247,6 +3454,14 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
     });
   }, [currentUser?.uid]);
 
+  useEffect(() => {
+    if (!currentUser) return;
+    const q = query(collection(db, 'store_follows'), where('followerUid', '==', currentUser.uid));
+    return onSnapshot(q, (snap) => {
+      setFollowingStoreIds(new Set(snap.docs.map(d => d.data().storeId as string)));
+    }, () => {});
+  }, [currentUser?.uid]);
+
   const markAsRead = async (id: string) => {
     await updateDoc(doc(db, 'notifications', id), { isRead: true });
   };
@@ -3259,6 +3474,20 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
       likedBy: alreadyLiked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
       likesCount: alreadyLiked ? Math.max(0, post.likesCount - 1) : post.likesCount + 1
     });
+    if (!alreadyLiked && post.authorUid !== currentUser.uid) {
+      const senderName = currentProfile?.name || currentUser.displayName || 'Someone';
+      const senderPhoto = currentProfile?.photoURL || currentUser.photoURL || '';
+      addDoc(collection(db, 'notifications'), {
+        toUid: post.authorUid,
+        fromUid: currentUser.uid,
+        fromName: senderName,
+        fromPhoto: senderPhoto,
+        type: 'like',
+        message: `liked your post`,
+        isRead: false,
+        createdAt: serverTimestamp(),
+      }).catch(() => {});
+    }
   };
 
   const handleVote = async (post: GlobalPost, optionIndex: number) => {
@@ -3284,7 +3513,9 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
 
   const followingFeed = sortedFeed.filter(p => {
     const uid = p.authorUid || p._authorUid;
-    return uid && followingUids.has(uid);
+    if (uid && followingUids.has(uid)) return true;
+    if (p.storeId && followingStoreIds.has(p.storeId)) return true;
+    return false;
   });
 
   const displayFeed = activeSubTab === 'following' ? followingFeed : sortedFeed;
@@ -3305,7 +3536,7 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
             {tab === 'following' && <Users size={13} />}
             {tab === 'notifications' && <Bell size={13} />}
             {tab === 'all' ? 'All' : tab === 'following' ? 'Following' : 'Alerts'}
-            {tab === 'notifications' && notifications.length > 0 && (
+            {tab === 'notifications' && notifications.filter(n => !n.isRead).length > 0 && (
               <span className="w-1.5 h-1.5 bg-brand-gold rounded-full animate-pulse" />
             )}
           </button>
@@ -3323,24 +3554,38 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
           {notifications.map(notif => (
             <div
               key={notif.id}
-              onClick={() => markAsRead(notif.id)}
-              className="glass-card p-5 rounded-[2rem] flex items-center justify-between cursor-pointer hover:shadow-md transition-all"
+              onClick={() => { if (!notif.isRead) markAsRead(notif.id); }}
+              className={cn(
+                "glass-card p-5 rounded-[2rem] flex items-center justify-between transition-all",
+                !notif.isRead ? "ring-2 ring-brand-gold/30 cursor-pointer hover:shadow-md" : "opacity-80"
+              )}
             >
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl overflow-hidden border border-brand-navy/5 relative">
-                  <img src={notif.fromPhoto} alt="" className="w-full h-full object-cover" />
-                  <div className="absolute -bottom-1 -right-1 bg-brand-gold p-1 rounded-lg border-2 border-white">
-                    {notif.type === 'follow' ? <UserPlus size={10} className="text-white" /> : <Bell size={10} className="text-white" />}
+              <div className="flex items-center gap-4 flex-1 min-w-0">
+                <div className="w-12 h-12 rounded-2xl overflow-hidden border border-brand-navy/5 relative bg-brand-gold/10 flex items-center justify-center shrink-0">
+                  {notif.fromPhoto ? (
+                    <img src={notif.fromPhoto} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <Sparkles size={20} className="text-brand-gold" />
+                  )}
+                  <div className={cn("absolute -bottom-1 -right-1 p-1 rounded-lg border-2 border-white", notif.type === 'like' ? "bg-red-400" : notif.type === 'comment' ? "bg-blue-400" : "bg-brand-gold")}>
+                    {notif.type === 'follow' ? <UserPlus size={10} className="text-white" /> : notif.type === 'like' ? <Heart size={10} className="text-white fill-white" /> : notif.type === 'comment' ? <MessageCircle size={10} className="text-white" /> : <Bell size={10} className="text-white" />}
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm line-clamp-2"><span className="font-bold">{notif.fromName}</span> {notif.type === 'follow' ? 'started following you!' : notif.message}</p>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm line-clamp-2">
+                    {notif.type === 'system' ? notif.message : <><span className="font-bold">{notif.fromName}</span> {notif.type === 'follow' ? 'started following you!' : notif.message}</>}
+                  </p>
                   <p className="text-[10px] text-brand-navy/40 font-bold uppercase tracking-widest mt-1">
                     {notif.createdAt ? format(notif.createdAt.toDate(), 'MMM d, h:mm a') : 'Just now'}
                   </p>
                 </div>
               </div>
-              <ChevronRight size={16} className="text-brand-navy/10" />
+              <button
+                onClick={async (e) => { e.stopPropagation(); await deleteDoc(doc(db, 'notifications', notif.id)); }}
+                className="ml-3 w-7 h-7 rounded-xl flex items-center justify-center text-brand-navy/20 hover:text-red-400 hover:bg-red-50 transition-all shrink-0"
+              >
+                <X size={14} />
+              </button>
             </div>
           ))}
           {notifications.length === 0 && (
@@ -3360,9 +3605,11 @@ function ForYouScreen({ onViewUser, onViewStore, notifications, currentUser, cur
                   key={`gp-${item.id}`}
                   post={item as GlobalPost}
                   currentUser={currentUser}
+                  currentProfile={currentProfile}
                   onViewUser={onViewUser}
                   onLike={handleLike}
                   onVote={handleVote}
+                  onDelete={async (p) => { await deleteDoc(doc(db, 'global_posts', p.id)); }}
                 />
               );
             } else {
@@ -3783,6 +4030,7 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser }: { store:
   const [newPost, setNewPost] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [card, setCard] = useState<Card | null>(null);
+  const [isFollowingStore, setIsFollowingStore] = useState(false);
 
   useEffect(() => {
     const cardId = `${user.uid}_${store.id}`;
@@ -3816,6 +4064,26 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser }: { store:
       console.error("Store feed error:", error);
     });
   }, [store.id]);
+
+  useEffect(() => {
+    const followId = `${user.uid}_${store.id}`;
+    return onSnapshot(doc(db, 'store_follows', followId), (snap) => {
+      setIsFollowingStore(snap.exists());
+    }, () => {});
+  }, [user.uid, store.id]);
+
+  const handleFollowStore = async () => {
+    const followId = `${user.uid}_${store.id}`;
+    if (isFollowingStore) {
+      await deleteDoc(doc(db, 'store_follows', followId));
+    } else {
+      await setDoc(doc(db, 'store_follows', followId), {
+        followerUid: user.uid,
+        storeId: store.id,
+        createdAt: serverTimestamp(),
+      });
+    }
+  };
 
   const handleJoinStore = async () => {
     const cardId = `${user.uid}_${store.id}`;
@@ -3882,6 +4150,18 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser }: { store:
             <p className="text-white/60 text-sm">{store.category} • {store.address}</p>
           </div>
         </div>
+        <button
+          onClick={handleFollowStore}
+          className={cn(
+            "absolute top-4 right-4 flex items-center gap-1.5 px-4 py-2 rounded-2xl font-bold text-xs transition-all shadow-lg active:scale-95",
+            isFollowingStore
+              ? "bg-white/20 text-white border border-white/30 hover:bg-red-500/30"
+              : "bg-brand-gold text-brand-navy hover:bg-brand-gold/80"
+          )}
+        >
+          {isFollowingStore ? <UserCheck size={14} /> : <UserPlus size={14} />}
+          {isFollowingStore ? 'Following' : 'Follow'}
+        </button>
       </div>
 
       {card ? (
@@ -4037,6 +4317,8 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
   const [rating, setRating] = useState(5);
   const [isPosting, setIsPosting] = useState(false);
   const [isFollowing, setIsFollowing] = useState(false);
+  const [profileTab, setProfileTab] = useState<'wall' | 'posts'>('wall');
+  const [userPosts, setUserPosts] = useState<GlobalPost[]>([]);
 
   useEffect(() => {
     // Listen to target user profile for real-time stamp updates
@@ -4090,6 +4372,16 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
       });
     }
 
+    const postsQ = query(
+      collection(db, 'global_posts'),
+      where('authorUid', '==', initialTargetUser.uid),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+    const unsubPosts = onSnapshot(postsQ, (snap) => {
+      setUserPosts(snap.docs.map(d => ({ id: d.id, ...d.data() } as GlobalPost)));
+    }, () => {});
+
     return () => {
       unsubProfile();
       unsubCards();
@@ -4098,6 +4390,7 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
       unsubHistory();
       unsubReviews();
       unsubFollow();
+      unsubPosts();
     };
   }, [initialTargetUser.uid, initialTargetUser.role, currentUser.uid]);
 
@@ -4299,43 +4592,93 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
         </div>
       </div>
 
-      <div className="space-y-4">
-        <h3 className="font-display text-xl font-bold px-2">Wall & Shoutouts</h3>
-        {targetUser.uid !== currentUser.uid && (
-          <div className="glass-card p-6 rounded-[2.5rem] space-y-4">
-            <div className="flex gap-2 mb-2">
-              {[1, 2, 3, 4, 5].map(star => (
-                <button key={star} onClick={() => setRating(star)}>
-                  <Star size={20} className={cn(star <= rating ? "text-brand-gold fill-brand-gold" : "text-brand-navy/10")} />
-                </button>
-              ))}
-            </div>
-            <textarea 
-              value={newReview}
-              onChange={(e) => setNewReview(e.target.value)}
-              placeholder={`Write on ${targetUser.name}'s wall...`}
-              className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm h-24 resize-none"
-            />
-            <button 
-              onClick={handlePostReview}
-              disabled={isPosting || !newReview.trim()}
-              className="w-full bg-brand-navy text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-brand-navy/10 font-bold"
-            >
-              <Send size={18} />
-              Post to Wall
-            </button>
-          </div>
-        )}
+      {/* Tab switcher */}
+      <div className="flex p-1 glass-card rounded-2xl">
+        <button
+          onClick={() => setProfileTab('wall')}
+          className={cn("flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5", profileTab === 'wall' ? "bg-brand-navy text-white shadow" : "text-brand-navy/40")}
+        >
+          <MessageSquare size={13} />
+          Wall
+        </button>
+        <button
+          onClick={() => setProfileTab('posts')}
+          className={cn("flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5", profileTab === 'posts' ? "bg-brand-navy text-white shadow" : "text-brand-navy/40")}
+        >
+          <Zap size={13} />
+          Posts {userPosts.length > 0 && `(${userPosts.length})`}
+        </button>
+      </div>
 
+      {profileTab === 'wall' ? (
         <div className="space-y-4">
-          {reviews.map(review => (
-            <WallPostItem key={review.id} post={review} currentUser={currentUser} />
+          {targetUser.uid !== currentUser.uid && (
+            <div className="glass-card p-6 rounded-[2.5rem] space-y-4">
+              <div className="flex gap-2 mb-2">
+                {[1, 2, 3, 4, 5].map(star => (
+                  <button key={star} onClick={() => setRating(star)}>
+                    <Star size={20} className={cn(star <= rating ? "text-brand-gold fill-brand-gold" : "text-brand-navy/10")} />
+                  </button>
+                ))}
+              </div>
+              <textarea
+                value={newReview}
+                onChange={(e) => setNewReview(e.target.value)}
+                placeholder={`Write on ${targetUser.name}'s wall...`}
+                className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm h-24 resize-none"
+              />
+              <button
+                onClick={handlePostReview}
+                disabled={isPosting || !newReview.trim()}
+                className="w-full bg-brand-navy text-white py-4 rounded-2xl font-bold flex items-center justify-center gap-2 disabled:opacity-50 shadow-lg shadow-brand-navy/10"
+              >
+                <Send size={18} />
+                Post to Wall
+              </button>
+            </div>
+          )}
+          <div className="space-y-4">
+            {reviews.map(review => (
+              <WallPostItem key={review.id} post={review} currentUser={currentUser} />
+            ))}
+            {reviews.length === 0 && (
+              <p className="text-center py-12 text-xs text-brand-navy/20 font-bold uppercase tracking-widest italic">No wall posts yet</p>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {userPosts.map(post => (
+            <FeedPostCard
+              key={post.id}
+              post={post}
+              currentUser={currentUser}
+              currentProfile={currentProfile}
+              onViewUser={() => {}}
+              onLike={async (p) => {
+                const ref = doc(db, 'global_posts', p.id);
+                const alreadyLiked = (p.likedBy || []).includes(currentUser.uid);
+                await updateDoc(ref, {
+                  likedBy: alreadyLiked ? arrayRemove(currentUser.uid) : arrayUnion(currentUser.uid),
+                  likesCount: alreadyLiked ? Math.max(0, p.likesCount - 1) : p.likesCount + 1,
+                });
+              }}
+              onVote={async (p, optionIndex) => {
+                const ref = doc(db, 'global_posts', p.id);
+                const votes = p.pollVotes || {};
+                const currentVoteKey = Object.keys(votes).find(k => (votes[k] || []).includes(currentUser.uid));
+                const updates: any = {};
+                if (currentVoteKey !== undefined) updates[`pollVotes.${currentVoteKey}`] = arrayRemove(currentUser.uid);
+                if (currentVoteKey !== String(optionIndex)) updates[`pollVotes.${optionIndex}`] = arrayUnion(currentUser.uid);
+                if (Object.keys(updates).length > 0) await updateDoc(ref, updates);
+              }}
+            />
           ))}
-          {reviews.length === 0 && (
-            <p className="text-center py-12 text-xs text-brand-navy/20 font-bold uppercase tracking-widest italic">No wall posts yet</p>
+          {userPosts.length === 0 && (
+            <p className="text-center py-12 text-xs text-brand-navy/20 font-bold uppercase tracking-widest italic">No posts yet</p>
           )}
         </div>
-      </div>
+      )}
     </motion.div>
   );
 }
