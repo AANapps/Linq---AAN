@@ -4694,7 +4694,7 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
                 className={cn(
                   "flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm transition-all shadow-lg active:scale-95",
                   isFollowing
-                    ? "bg-brand-navy/10 text-brand-navy/60 hover:bg-red-50 hover:text-red-400"
+                    ? "bg-green-500 text-white hover:bg-red-400"
                     : "bg-brand-gold text-brand-navy hover:bg-brand-gold/80"
                 )}
               >
