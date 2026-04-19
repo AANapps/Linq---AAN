@@ -4795,24 +4795,14 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
                     )}
                   </div>
 
-                  {/* Name + category */}
+                  {/* Reward headline + store name */}
                   <div className="mt-2">
-                    <p className="font-bold text-white text-sm leading-tight line-clamp-1">{store.name}</p>
-                    <p className="text-white/50 text-[10px] font-medium mt-0.5">{store.category}</p>
+                    {store.reward
+                      ? <p className="font-extrabold text-white text-base leading-tight line-clamp-2">{store.reward}</p>
+                      : <p className="font-extrabold text-white text-base leading-tight line-clamp-2">{store.stamps_required_for_reward} stamps to reward</p>
+                    }
+                    <p className="text-white/50 text-[10px] font-medium mt-1 line-clamp-1">{store.name}</p>
                   </div>
-
-                  {/* Reward */}
-                  {store.reward && (
-                    <div className="mt-2 bg-white/15 rounded-xl px-3 py-1.5">
-                      <p className="text-white/60 text-[8px] font-bold uppercase tracking-widest">Reward</p>
-                      <p className="text-white font-bold text-xs leading-tight line-clamp-1">{store.reward}</p>
-                    </div>
-                  )}
-                  {!store.reward && (
-                    <div className="mt-2 bg-white/10 rounded-xl px-3 py-1.5">
-                      <p className="text-white/50 text-[9px] font-medium">{store.stamps_required_for_reward} stamps to reward</p>
-                    </div>
-                  )}
 
                   {/* Join button */}
                   <button
@@ -5700,6 +5690,19 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
             {isFollowingStore ? <UserCheck size={14} /> : <UserPlus size={14} />}
             {isFollowingStore ? 'Following' : 'Follow'}
           </button>
+          {store.ownerUid !== user.uid && (
+            <button
+              onClick={card ? undefined : handleJoinStore}
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-2 rounded-2xl font-bold text-xs transition-all shadow-lg active:scale-95",
+                card
+                  ? "bg-green-500/30 text-green-300 border border-green-400/40 cursor-default"
+                  : "bg-white/90 text-brand-navy hover:bg-white"
+              )}
+            >
+              {card ? <><UserCheck size={14} /> Member</> : <><Plus size={14} /> Join</>}
+            </button>
+          )}
         </div>
       </div>
 
