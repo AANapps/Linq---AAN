@@ -4740,7 +4740,7 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
   return (
     <div className="space-y-5 pb-20">
       <div className="flex p-1 glass-card rounded-2xl">
-        {(['all', 'hot'] as const).map(tab => (
+        {(['all', ...(onViewStore ? ['hot'] : [])] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveSubTab(tab)}
