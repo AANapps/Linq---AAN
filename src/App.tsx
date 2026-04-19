@@ -68,6 +68,7 @@ import {
   Compass,
   MessageCircle,
   Zap,
+  Flame,
   UserPlus,
   UserCheck,
   ArrowLeft,
@@ -172,6 +173,7 @@ interface StoreProfile {
   description: string;
   isVerified: boolean;
   stamps_required_for_reward: number;
+  reward?: string;
   theme?: string;
   location?: string;
   visibilitySettings?: {
@@ -1217,7 +1219,7 @@ function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onVi
       exit={{ opacity: 0, x: -20 }}
     >
       {activeTab === 'for-you' && (
-        <ForYouScreen onViewUser={onViewUser} onViewStore={onViewStore} currentUser={user} currentProfile={profile} />
+        <ForYouScreen onViewUser={onViewUser} onViewStore={onViewStore} currentUser={user} currentProfile={profile} userCards={initialCards} />
       )}
 
       {activeTab === 'messages' && (
@@ -3128,6 +3130,7 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
   const [handle, setHandle] = useState(profile.handle || user.email?.split('@')[0] || '');
   const [store, setStore] = useState<StoreProfile | null>(null);
   const [storeName, setStoreName] = useState('');
+  const [storeReward, setStoreReward] = useState('');
   const [storeCategory, setStoreCategory] = useState<Category>('Food');
   const [storeTheme, setStoreTheme] = useState('#1e3a5f');
   const [storeLogo, setStoreLogo] = useState('');
@@ -3146,6 +3149,7 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
         const s = { id: snap.docs[0].id, ...snap.docs[0].data() } as StoreProfile;
         setStore(s);
         setStoreName(s.name || '');
+        setStoreReward(s.reward || '');
         setStoreCategory(s.category || 'Food');
         setStoreTheme(s.theme || '#1e3a5f');
         setStoreLogo(s.logoUrl || '');
@@ -3164,7 +3168,7 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
 
       if (profile.role === 'vendor' && store) {
         await updateDoc(doc(db, 'stores', store.id), {
-          name: storeName, category: storeCategory, theme: storeTheme,
+          name: storeName, reward: storeReward, category: storeCategory, theme: storeTheme,
           logoUrl: storeLogo, location: storeLocation, visibilitySettings: visibility,
         });
       }
@@ -3243,6 +3247,13 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
               <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Business Name</label>
               <input value={storeName} onChange={e => setStoreName(e.target.value)} placeholder="Your business name"
                 className="w-full px-5 py-4 rounded-2xl bg-white border border-brand-navy/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-gold/30" />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Stamp Card Reward</label>
+              <input value={storeReward} onChange={e => setStoreReward(e.target.value)} placeholder="e.g. Free coffee, Free class"
+                className="w-full px-5 py-4 rounded-2xl bg-white border border-brand-navy/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-gold/30" />
+              <p className="text-[10px] text-brand-navy/30 px-1">Shown on the Hot tab so customers know what they earn</p>
             </div>
 
             <div className="space-y-2">
@@ -4566,15 +4577,17 @@ function NotificationsPanel({ notifications, onClose }: { notifications: Notific
   );
 }
 
-function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: { onViewUser: (u: UserProfile) => void, onViewStore?: (s: StoreProfile) => void, currentUser?: FirebaseUser, currentProfile?: UserProfile | null }) {
+function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, userCards = [] }: { onViewUser: (u: UserProfile) => void, onViewStore?: (s: StoreProfile) => void, currentUser?: FirebaseUser, currentProfile?: UserProfile | null, userCards?: Card[] }) {
   const [globalPosts, setGlobalPosts] = useState<GlobalPost[]>([]);
   const [vendorPosts, setVendorPosts] = useState<any[]>([]);
   const [followingUids, setFollowingUids] = useState<Set<string>>(new Set());
   const [followingStoreIds, setFollowingStoreIds] = useState<Set<string>>(new Set());
+  const [hotStores, setHotStores] = useState<StoreProfile[]>([]);
+  const [joiningStoreId, setJoiningStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  const [activeSubTab, setActiveSubTab] = useState<'all' | 'following'>('all');
+  const [activeSubTab, setActiveSubTab] = useState<'all' | 'hot'>('all');
   const lastDocRef = useRef<any>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -4646,6 +4659,38 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: 
     }, () => {});
   }, [currentUser?.uid]);
 
+  useEffect(() => {
+    return onSnapshot(collection(db, 'stores'), (snap) => {
+      setHotStores(snap.docs.map(d => ({ id: d.id, ...d.data() } as StoreProfile)));
+    }, () => {});
+  }, []);
+
+  const handleJoinStore = async (store: StoreProfile) => {
+    if (!currentUser) return;
+    setJoiningStoreId(store.id);
+    try {
+      const cardId = `${currentUser.uid}_${store.id}`;
+      const cardRef = doc(db, 'cards', cardId);
+      const cardSnap = await getDoc(cardRef);
+      if (!cardSnap.exists() || cardSnap.data()?.isArchived) {
+        await setDoc(cardRef, {
+          user_id: currentUser.uid,
+          store_id: store.id,
+          current_stamps: 0,
+          total_completed_cycles: 0,
+          last_tap_timestamp: serverTimestamp(),
+          isArchived: false,
+          isRedeemed: false,
+          userName: currentProfile?.name || currentUser.displayName || 'Loyal Customer',
+          userPhoto: currentProfile?.photoURL || currentUser.photoURL || ''
+        });
+        await updateDoc(doc(db, 'users', currentUser.uid), { total_cards_held: increment(1) });
+      }
+      if (onViewStore) onViewStore(store);
+    } catch (err) { console.error(err); }
+    setJoiningStoreId(null);
+  };
+
   const handleLike = async (post: GlobalPost) => {
     if (!currentUser) return;
     const ref = doc(db, 'global_posts', post.id);
@@ -4694,20 +4739,12 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: 
     return tB - tA;
   });
 
-  const followingFeed = sortedFeed.filter(p => {
-    const uid = p.authorUid || p._authorUid;
-    if (uid && followingUids.has(uid)) return true;
-    const sid = p.storeId || p.store_id;
-    if (sid && followingStoreIds.has(sid)) return true;
-    return false;
-  });
-
-  const displayFeed = activeSubTab === 'following' ? followingFeed : sortedFeed;
+  const displayFeed = sortedFeed;
 
   return (
     <div className="space-y-5 pb-20">
       <div className="flex p-1 glass-card rounded-2xl">
-        {(['all', 'following'] as const).map(tab => (
+        {(['all', 'hot'] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveSubTab(tab)}
@@ -4716,13 +4753,94 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile }: 
               activeSubTab === tab ? "bg-brand-navy text-white shadow-lg" : "text-brand-navy/40"
             )}
           >
-            {tab === 'all' ? <Zap size={13} /> : <Users size={13} />}
-            {tab === 'all' ? 'All' : 'Following'}
+            {tab === 'all' ? <Zap size={13} /> : <Flame size={13} />}
+            {tab === 'all' ? 'All' : 'Hot'}
           </button>
         ))}
       </div>
 
-      {loading ? (
+      {activeSubTab === 'hot' ? (
+        <div className="grid grid-cols-2 gap-3">
+          {hotStores.map(store => {
+            const joined = userCards.some(c => c.store_id === store.id && !c.isArchived);
+            const isJoining = joiningStoreId === store.id;
+            const bg = store.theme || '#1e3a5f';
+            return (
+              <motion.div
+                key={store.id}
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="relative rounded-[1.75rem] overflow-hidden aspect-square flex flex-col cursor-pointer active:scale-[0.97] transition-transform"
+                style={{ background: `linear-gradient(145deg, ${bg}ee, ${bg}99)` }}
+                onClick={() => onViewStore && onViewStore(store)}
+              >
+                {/* Cover blurred background */}
+                {store.coverUrl && (
+                  <div className="absolute inset-0">
+                    <img src={store.coverUrl} alt="" className="w-full h-full object-cover opacity-20" />
+                  </div>
+                )}
+                <div className="relative z-10 flex flex-col h-full p-4">
+                  {/* Logo + verified */}
+                  <div className="flex items-start justify-between mb-auto">
+                    <div className="w-11 h-11 rounded-2xl overflow-hidden border-2 border-white/30 shadow-lg bg-white/10">
+                      {store.logoUrl
+                        ? <img src={store.logoUrl} alt="" className="w-full h-full object-cover" />
+                        : <div className="w-full h-full flex items-center justify-center"><Building2 size={18} className="text-white/70" /></div>}
+                    </div>
+                    {store.isVerified && (
+                      <div className="w-6 h-6 bg-brand-gold rounded-full flex items-center justify-center shadow">
+                        <Sparkles size={11} className="text-brand-navy" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Name + category */}
+                  <div className="mt-2">
+                    <p className="font-bold text-white text-sm leading-tight line-clamp-1">{store.name}</p>
+                    <p className="text-white/50 text-[10px] font-medium mt-0.5">{store.category}</p>
+                  </div>
+
+                  {/* Reward */}
+                  {store.reward && (
+                    <div className="mt-2 bg-white/15 rounded-xl px-3 py-1.5">
+                      <p className="text-white/60 text-[8px] font-bold uppercase tracking-widest">Reward</p>
+                      <p className="text-white font-bold text-xs leading-tight line-clamp-1">{store.reward}</p>
+                    </div>
+                  )}
+                  {!store.reward && (
+                    <div className="mt-2 bg-white/10 rounded-xl px-3 py-1.5">
+                      <p className="text-white/50 text-[9px] font-medium">{store.stamps_required_for_reward} stamps to reward</p>
+                    </div>
+                  )}
+
+                  {/* Join button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); if (!joined) handleJoinStore(store); else onViewStore && onViewStore(store); }}
+                    disabled={isJoining}
+                    className={cn(
+                      "mt-3 w-full py-2 rounded-xl text-[11px] font-bold transition-all active:scale-95 flex items-center justify-center gap-1.5",
+                      joined
+                        ? "bg-white/20 text-white/80"
+                        : "bg-white text-brand-navy shadow-lg"
+                    )}
+                  >
+                    {isJoining
+                      ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}><Sparkles size={12} /></motion.div>
+                      : joined ? <><UserCheck size={12} /> Joined</> : <><Plus size={12} /> Join</>}
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })}
+          {hotStores.length === 0 && (
+            <div className="col-span-2 py-20 text-center text-brand-navy/20">
+              <Building2 size={48} className="mx-auto mb-4 opacity-20" />
+              <p className="font-bold text-sm">No businesses yet</p>
+            </div>
+          )}
+        </div>
+      ) : loading ? (
         <div className="flex justify-center py-12">
           <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
             <Sparkles className="w-8 h-8 text-brand-gold" />
