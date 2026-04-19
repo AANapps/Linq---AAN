@@ -593,40 +593,45 @@ export default function App() {
     if (!user) return;
     const uid = user.uid;
 
-    // Delete global posts authored by this user
-    const postsSnap = await getDocs(query(collection(db, 'global_posts'), where('authorUid', '==', uid)));
-    await Promise.all(postsSnap.docs.map(d => deleteDoc(d.ref)));
+    const tryDelete = async (fn: () => Promise<void>) => { try { await fn(); } catch (e) { console.warn('Delete step skipped:', e); } };
 
-    // Delete follow relationships in both directions
-    const followingSnap = await getDocs(query(collection(db, 'follows'), where('followerUid', '==', uid)));
-    const followersSnap = await getDocs(query(collection(db, 'follows'), where('followingUid', '==', uid)));
-    await Promise.all([...followingSnap.docs, ...followersSnap.docs].map(d => deleteDoc(d.ref)));
+    await tryDelete(async () => {
+      const snap = await getDocs(query(collection(db, 'global_posts'), where('authorUid', '==', uid)));
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    });
+    await tryDelete(async () => {
+      const [a, b] = await Promise.all([
+        getDocs(query(collection(db, 'follows'), where('followerUid', '==', uid))),
+        getDocs(query(collection(db, 'follows'), where('followingUid', '==', uid))),
+      ]);
+      await Promise.all([...a.docs, ...b.docs].map(d => deleteDoc(d.ref)));
+    });
+    await tryDelete(async () => {
+      const snap = await getDocs(query(collection(db, 'store_follows'), where('followerUid', '==', uid)));
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    });
+    await tryDelete(async () => {
+      const [a, b] = await Promise.all([
+        getDocs(query(collection(db, 'user_reviews'), where('authorUid', '==', uid))),
+        getDocs(query(collection(db, 'user_reviews'), where('toUid', '==', uid))),
+      ]);
+      await Promise.all([...a.docs, ...b.docs].map(d => deleteDoc(d.ref)));
+    });
+    await tryDelete(async () => {
+      const snap = await getDocs(query(collection(db, 'stores'), where('ownerUid', '==', uid)));
+      await Promise.all(snap.docs.map(async (storeDoc) => {
+        const posts = await getDocs(collection(db, 'stores', storeDoc.id, 'posts'));
+        await Promise.all(posts.docs.map(d => deleteDoc(d.ref)));
+        await deleteDoc(storeDoc.ref);
+      }));
+    });
+    await tryDelete(async () => {
+      const snap = await getDocs(query(collection(db, 'notifications'), where('toUid', '==', uid)));
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    });
+    await tryDelete(() => deleteDoc(doc(db, 'users', uid)));
 
-    // Delete store follows
-    const storeFollowsSnap = await getDocs(query(collection(db, 'store_follows'), where('followerUid', '==', uid)));
-    await Promise.all(storeFollowsSnap.docs.map(d => deleteDoc(d.ref)));
-
-    // Delete wall posts written by or to this user
-    const reviewsWrittenSnap = await getDocs(query(collection(db, 'user_reviews'), where('authorUid', '==', uid)));
-    const reviewsReceivedSnap = await getDocs(query(collection(db, 'user_reviews'), where('toUid', '==', uid)));
-    await Promise.all([...reviewsWrittenSnap.docs, ...reviewsReceivedSnap.docs].map(d => deleteDoc(d.ref)));
-
-    // Delete vendor store and its posts
-    const storeSnap = await getDocs(query(collection(db, 'stores'), where('ownerUid', '==', uid)));
-    await Promise.all(storeSnap.docs.map(async (storeDoc) => {
-      const storePostsSnap = await getDocs(collection(db, 'stores', storeDoc.id, 'posts'));
-      await Promise.all(storePostsSnap.docs.map(d => deleteDoc(d.ref)));
-      return deleteDoc(storeDoc.ref);
-    }));
-
-    // Delete notifications sent to this user
-    const notifsSnap = await getDocs(query(collection(db, 'notifications'), where('toUid', '==', uid)));
-    await Promise.all(notifsSnap.docs.map(d => deleteDoc(d.ref)));
-
-    // Delete user profile doc
-    await deleteDoc(doc(db, 'users', uid));
-
-    // Delete Firebase Auth account — re-authenticate first if the session is stale
+    // Delete the Firebase Auth account, re-authenticating if the session is stale
     try {
       await user.delete();
     } catch (err: any) {
@@ -634,10 +639,10 @@ export default function App() {
         await reauthenticateWithPopup(user, new GoogleAuthProvider());
         await user.delete();
       } else {
+        console.error('user.delete() failed:', err);
         throw err;
       }
     }
-    // Ensure local state is cleared and landing page is shown
     await signOut(auth);
   };
 
@@ -3340,7 +3345,13 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
                 <button
                   onClick={async () => {
                     setDeleting(true);
-                    try { await onDeleteAccount(); } catch { setDeleting(false); }
+                    try {
+                      await onDeleteAccount();
+                    } catch (err: any) {
+                      console.error('Delete account error:', err);
+                      alert('Could not delete account: ' + (err?.message ?? 'Unknown error'));
+                      setDeleting(false);
+                    }
                   }}
                   disabled={deleting}
                   className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl hover:bg-red-600 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2"
