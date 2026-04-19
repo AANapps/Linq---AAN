@@ -5467,6 +5467,12 @@ function CommunityScreen({ onViewUser, currentUser }: { onViewUser: (u: UserProf
 
 function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage }: { store: StoreProfile, onBack: () => void, user: FirebaseUser, profile: UserProfile | null, onViewUser: (u: UserProfile) => void, onMessage?: (chatId: string) => void, key?: React.Key }) {
   const [posts, setPosts] = useState<Post[]>([]);
+  const [vendorGlobalPosts, setVendorGlobalPosts] = useState<GlobalPost[]>([]);
+  const [storeReviews, setStoreReviews] = useState<any[]>([]);
+  const [activeStoreTab, setActiveStoreTab] = useState<'posts' | 'reviews'>('posts');
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewText, setReviewText] = useState('');
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [newPost, setNewPost] = useState('');
   const [isPosting, setIsPosting] = useState(false);
@@ -5521,6 +5527,17 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
     }, (error) => {
       console.error("Store feed error:", error);
     });
+  }, [store.id]);
+
+  useEffect(() => {
+    if (!store.ownerUid) return;
+    const q = query(collection(db, 'global_posts'), where('authorUid', '==', store.ownerUid), where('authorRole', '==', 'vendor'), orderBy('createdAt', 'desc'), limit(30));
+    return onSnapshot(q, snap => setVendorGlobalPosts(snap.docs.map(d => ({ id: d.id, ...d.data() } as GlobalPost))), () => {});
+  }, [store.ownerUid]);
+
+  useEffect(() => {
+    const q = query(collection(db, 'store_reviews'), where('storeId', '==', store.id), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, snap => setStoreReviews(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
   }, [store.id]);
 
   useEffect(() => {
@@ -5624,6 +5641,32 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
       console.error(error);
     } finally {
       setIsPosting(false);
+    }
+  };
+
+  const myReview = storeReviews.find(r => r.authorUid === user.uid);
+
+  const handleSubmitReview = async () => {
+    if (!reviewText.trim() || myReview) return;
+    setIsSubmittingReview(true);
+    try {
+      const authorName = profile?.name || user.displayName || 'Anonymous';
+      const authorPhoto = profile?.photoURL || user.photoURL || '';
+      await addDoc(collection(db, 'store_reviews'), {
+        storeId: store.id,
+        authorUid: user.uid,
+        authorName,
+        authorPhoto,
+        rating: reviewRating,
+        content: reviewText.trim(),
+        createdAt: serverTimestamp(),
+      });
+      setReviewText('');
+      setReviewRating(5);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSubmittingReview(false);
     }
   };
 
@@ -5811,78 +5854,143 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
         </div>
       </div>
 
-      <div className="space-y-4">
-        <h3 className="font-display text-2xl font-bold">Community Feed</h3>
-        
-        <div className="glass-card p-4 rounded-3xl space-y-4">
-          <textarea 
-            value={newPost}
-            onChange={(e) => setNewPost(e.target.value)}
-            placeholder="Share your experience..."
-            className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm resize-none h-24"
-          />
-          <div className="flex justify-end">
-            <button 
-              onClick={handleCreatePost}
-              disabled={isPosting || !newPost.trim()}
-              className="bg-brand-navy text-white px-6 py-2 rounded-xl font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-all"
-            >
-              <Send size={16} />
-              Post
-            </button>
-          </div>
-        </div>
+      {/* Tab bar */}
+      <div className="flex p-1 glass-card rounded-2xl">
+        {(['posts', 'reviews'] as const).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setActiveStoreTab(tab)}
+            className={cn(
+              "flex-1 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5",
+              activeStoreTab === tab ? "bg-brand-navy text-white shadow-lg" : "text-brand-navy/40"
+            )}
+          >
+            {tab === 'posts' ? <><MessageSquare size={13} /> Posts</> : <><Star size={13} /> Reviews {storeReviews.length > 0 && `(${storeReviews.length})`}</>}
+          </button>
+        ))}
+      </div>
 
+      {activeStoreTab === 'posts' && (() => {
+        const merged = [
+          ...vendorGlobalPosts.map(p => ({ _type: 'global' as const, _ts: p.createdAt?.toMillis?.() ?? 0, data: p as any })),
+          ...posts.map(p => ({ _type: 'wall' as const, _ts: (p as any).createdAt?.toMillis?.() ?? 0, data: p as any })),
+        ].sort((a, b) => b._ts - a._ts);
+        return (
+          <div className="space-y-4">
+            {/* Post box for consumers */}
+            {store.ownerUid !== user.uid && (
+              <div className="glass-card p-4 rounded-3xl space-y-4">
+                <textarea
+                  value={newPost}
+                  onChange={(e) => setNewPost(e.target.value)}
+                  placeholder="Share your experience..."
+                  className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm resize-none h-24"
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleCreatePost}
+                    disabled={isPosting || !newPost.trim()}
+                    className="bg-brand-navy text-white px-6 py-2 rounded-xl font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-all"
+                  >
+                    <Send size={16} /> Post
+                  </button>
+                </div>
+              </div>
+            )}
+            {merged.map(item =>
+              item._type === 'global' ? (
+                <FeedPostCard key={item.data.id} post={item.data} currentUser={user} onViewUser={onViewUser}
+                  onLike={async (p) => { const ref = doc(db, 'global_posts', p.id); const liked = (p.likedBy || []).includes(user.uid); await updateDoc(ref, { likedBy: liked ? arrayRemove(user.uid) : arrayUnion(user.uid), likesCount: liked ? Math.max(0, p.likesCount - 1) : p.likesCount + 1 }); }}
+                  onVote={async (p, idx) => { const ref = doc(db, 'global_posts', p.id); const votes = p.pollVotes || {}; const oldKey = Object.keys(votes).find(k => (votes[k] || []).includes(user.uid)); const updates: any = { [`pollVotes.${idx}`]: arrayUnion(user.uid) }; if (oldKey !== undefined && oldKey !== String(idx)) updates[`pollVotes.${oldKey}`] = arrayRemove(user.uid); await updateDoc(ref, updates); }}
+                />
+              ) : (
+                <div key={item.data.id} className="glass-card p-5 rounded-[2rem] space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full overflow-hidden border border-brand-navy/5 shrink-0 cursor-pointer"
+                      onClick={async () => { const snap = await getDoc(doc(db, 'users', item.data.authorUid)).catch(() => null); if (snap?.exists()) onViewUser({ uid: snap.id, ...snap.data() } as UserProfile); }}>
+                      <img src={item.data.authorPhoto || `https://i.pravatar.cc/40?u=${item.data.authorUid}`} alt="" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm leading-snug">
+                        <span className="font-bold cursor-pointer hover:text-brand-gold transition-colors"
+                          onClick={async () => { const snap = await getDoc(doc(db, 'users', item.data.authorUid)).catch(() => null); if (snap?.exists()) onViewUser({ uid: snap.id, ...snap.data() } as UserProfile); }}>
+                          {item.data.authorName}
+                        </span>
+                        <span className="text-brand-navy/30 mx-1">›</span>
+                        <span className="font-bold text-brand-gold">{store.name}</span>
+                      </p>
+                      <p className="text-[10px] text-brand-navy/40 font-medium">{item.data.createdAt ? format(item.data.createdAt.toDate(), 'MMM d · h:mm a') : 'Just now'}</p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-brand-navy/80 leading-relaxed">{item.data.content}</p>
+                </div>
+              )
+            )}
+            {merged.length === 0 && <div className="py-12 text-center text-brand-navy/20"><MessageSquare size={40} className="mx-auto mb-2 opacity-10" /><p className="font-bold text-sm">No posts yet</p></div>}
+          </div>
+        );
+      })()}
+
+      {activeStoreTab === 'reviews' && (
         <div className="space-y-4">
-          {posts.map(post => (
-            <div key={post.id} className="glass-card p-6 rounded-[2.5rem] space-y-4">
+          {/* Leave a review — only if not already reviewed */}
+          {store.ownerUid !== user.uid && (
+            myReview ? (
+              <div className="glass-card p-4 rounded-3xl text-center text-sm text-brand-navy/40 font-medium">
+                You've already left a review
+              </div>
+            ) : (
+              <div className="glass-card p-5 rounded-3xl space-y-4">
+                <p className="font-bold text-sm">Leave a Review</p>
+                {/* Star picker */}
+                <div className="flex gap-1">
+                  {[1,2,3,4,5].map(s => (
+                    <button key={s} onClick={() => setReviewRating(s)}>
+                      <Star size={24} className={s <= reviewRating ? "text-brand-gold fill-brand-gold" : "text-brand-navy/20"} />
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={reviewText}
+                  onChange={e => setReviewText(e.target.value)}
+                  placeholder="Write your review..."
+                  className="w-full p-4 rounded-2xl bg-brand-bg border-none focus:ring-2 focus:ring-brand-gold/20 text-sm resize-none h-24"
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleSubmitReview}
+                    disabled={isSubmittingReview || !reviewText.trim()}
+                    className="bg-brand-navy text-white px-6 py-2 rounded-xl font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-all"
+                  >
+                    <Send size={14} /> Submit
+                  </button>
+                </div>
+              </div>
+            )
+          )}
+          {/* Review list */}
+          {storeReviews.map(review => (
+            <div key={review.id} className="glass-card p-5 rounded-[2rem] space-y-2">
               <div className="flex items-center gap-3">
-                <div 
-                  className="w-10 h-10 rounded-full overflow-hidden border border-brand-navy/5 cursor-pointer"
-                  onClick={async () => {
-                    const uq = query(collection(db, 'users'), where('uid', '==', post.authorUid));
-                    const usnap = await getDocs(uq);
-                    if (!usnap.empty) {
-                      onViewUser({ uid: usnap.docs[0].id, ...usnap.docs[0].data() } as UserProfile);
-                    }
-                  }}
-                >
-                  <img src={post.authorPhoto} alt="" className="w-full h-full object-cover" />
+                <div className="w-9 h-9 rounded-full overflow-hidden border border-brand-navy/5 shrink-0">
+                  <img src={review.authorPhoto || `https://i.pravatar.cc/40?u=${review.authorUid}`} alt="" className="w-full h-full object-cover" />
                 </div>
-                <div>
-                  <p className="text-sm leading-snug">
-                    <span
-                      className="font-bold cursor-pointer hover:text-brand-gold transition-colors"
-                      onClick={async () => {
-                        const snap = await getDoc(doc(db, 'users', post.authorUid)).catch(() => null);
-                        if (snap?.exists()) onViewUser({ uid: snap.id, ...snap.data() } as UserProfile);
-                      }}
-                    >
-                      {post.authorName}
-                    </span>
-                    <span className="text-brand-navy/30 mx-1">›</span>
-                    <span className="font-bold text-brand-gold">{store.name}</span>
-                  </p>
-                  <p className="text-[10px] text-brand-navy/40 font-bold uppercase tracking-widest">
-                    {post.createdAt ? format(post.createdAt.toDate(), 'MMM d, h:mm a') : 'Just now'}
-                  </p>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm">{review.authorName}</p>
+                  <div className="flex items-center gap-0.5 mt-0.5">
+                    {[1,2,3,4,5].map(s => (
+                      <Star key={s} size={11} className={s <= (review.rating || 5) ? "text-brand-gold fill-brand-gold" : "text-brand-navy/20"} />
+                    ))}
+                  </div>
                 </div>
+                <p className="text-[10px] text-brand-navy/40">{review.createdAt ? format(review.createdAt.toDate(), 'MMM d') : ''}</p>
               </div>
-              <p className="text-sm text-brand-navy/80 leading-relaxed">{post.content}</p>
-              <div className="flex items-center gap-6 pt-2 border-t border-brand-navy/5">
-                <button className="flex items-center gap-2 text-brand-navy/40 hover:text-red-500 transition-colors">
-                  <Heart size={18} />
-                  <span className="text-xs font-bold">{post.likesCount}</span>
-                </button>
-                <button className="flex items-center gap-2 text-brand-navy/40 hover:text-brand-navy transition-colors">
-                  <MessageSquare size={18} />
-                  <span className="text-xs font-bold">Reply</span>
-                </button>
-              </div>
+              <p className="text-sm text-brand-navy/70 leading-relaxed">{review.content}</p>
             </div>
           ))}
+          {storeReviews.length === 0 && <div className="py-12 text-center text-brand-navy/20"><Star size={40} className="mx-auto mb-2 opacity-10" /><p className="font-bold text-sm">No reviews yet</p></div>}
         </div>
-      </div>
+      )}
     </motion.div>
   );
 }
