@@ -557,9 +557,9 @@ export default function App() {
       setUser(firebaseUser);
       if (firebaseUser) {
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (!userDoc.exists() || !userDoc.data()?.roleConfirmed) {
-          setNeedsRoleSelection(true);
-        }
+        setNeedsRoleSelection(!userDoc.exists());
+      } else {
+        setNeedsRoleSelection(false);
       }
       setLoading(false);
     });
