@@ -1779,7 +1779,7 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
     const curr = card.current_stamps;
     prevStampsRef.current = curr;
     if (curr <= prev || card.isArchived) return;
-    const tiers = store?.rewardTiers?.length ? store.rewardTiers : (store?.reward ? [{ stamps: limit, reward: store.reward }] : []);
+    const tiers = store?.rewardTiers?.length ? store.rewardTiers : [{ stamps: limit, reward: store?.reward || 'Reward Unlocked!' }];
     const hit = tiers.find(t => t.stamps > prev && t.stamps <= curr);
     if (hit) {
       setUnlockedReward(hit.reward);
@@ -1990,7 +1990,7 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
         </div>
 
         {(() => {
-          const cardTheme = store?.theme || '#1e3a5f';
+          const cardTheme = store?.theme || '#3a6fcc';
           const rewardTiers = store?.rewardTiers?.length ? store.rewardTiers : [{ stamps: limit, reward: store?.reward || '' }];
           const tierStamps = new Set(rewardTiers.map(t => t.stamps));
           const nextTier = rewardTiers.find(t => t.stamps > card.current_stamps);
@@ -2610,7 +2610,7 @@ function CardBuilder({ store }: { store: StoreProfile | null }) {
 
   const [numTiers, setNumTiers] = useState(() => store?.rewardTiers?.length || 1);
   const [tiers, setTiers] = useState<{ stamps: number; reward: string }[]>(() => initTiers(store));
-  const [theme, setTheme] = useState(store?.theme || '#1a1a2e');
+  const [theme, setTheme] = useState(store?.theme || '#3a6fcc');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -2659,7 +2659,7 @@ function CardBuilder({ store }: { store: StoreProfile | null }) {
     }
   };
 
-  const DARK_THEMES = ['#2c4a7c', '#5b3a6e', '#2e6b5a', '#7a3a2e', '#2e4a6e', '#4a3a1e'];
+  const DARK_THEMES = ['#3a6fcc', '#8a4db8', '#2a9b72', '#c4622a', '#2e7fc4', '#b07830'];
   const totalStamps = tiers[tiers.length - 1]?.stamps || 10;
   const tierStampSet = new Set(tiers.map(t => t.stamps));
 
