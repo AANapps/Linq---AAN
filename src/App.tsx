@@ -5822,6 +5822,17 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
               {store.isVerified && <CheckCircle2 size={18} className="text-blue-400" />}
             </div>
             <p className="text-white/60 text-sm">{store.category}{store.location || store.address ? ` • ${store.location || store.address}` : ''}</p>
+            {avgRating !== null && (
+              <div className="flex items-center gap-1.5 mt-1">
+                <div className="flex items-center gap-0.5">
+                  {[1,2,3,4,5].map(s => (
+                    <Star key={s} size={11} className={s <= Math.round(avgRating) ? "text-brand-gold fill-brand-gold" : "text-white/30"} />
+                  ))}
+                </div>
+                <span className="text-white font-bold text-xs">{avgRating.toFixed(1)}</span>
+                <span className="text-white/50 text-xs">({storeReviews.length})</span>
+              </div>
+            )}
           </div>
         </div>
         <div className="absolute top-4 right-4 flex gap-2">
