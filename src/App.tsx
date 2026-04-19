@@ -577,6 +577,47 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
+  const handleDeleteAccount = async () => {
+    if (!user) return;
+    const uid = user.uid;
+
+    // Delete global posts authored by this user
+    const postsSnap = await getDocs(query(collection(db, 'global_posts'), where('authorUid', '==', uid)));
+    await Promise.all(postsSnap.docs.map(d => deleteDoc(d.ref)));
+
+    // Delete follow relationships in both directions
+    const followingSnap = await getDocs(query(collection(db, 'follows'), where('followerUid', '==', uid)));
+    const followersSnap = await getDocs(query(collection(db, 'follows'), where('followingUid', '==', uid)));
+    await Promise.all([...followingSnap.docs, ...followersSnap.docs].map(d => deleteDoc(d.ref)));
+
+    // Delete store follows
+    const storeFollowsSnap = await getDocs(query(collection(db, 'store_follows'), where('followerUid', '==', uid)));
+    await Promise.all(storeFollowsSnap.docs.map(d => deleteDoc(d.ref)));
+
+    // Delete wall posts written by or to this user
+    const reviewsWrittenSnap = await getDocs(query(collection(db, 'user_reviews'), where('authorUid', '==', uid)));
+    const reviewsReceivedSnap = await getDocs(query(collection(db, 'user_reviews'), where('toUid', '==', uid)));
+    await Promise.all([...reviewsWrittenSnap.docs, ...reviewsReceivedSnap.docs].map(d => deleteDoc(d.ref)));
+
+    // Delete vendor store and its posts
+    const storeSnap = await getDocs(query(collection(db, 'stores'), where('ownerUid', '==', uid)));
+    await Promise.all(storeSnap.docs.map(async (storeDoc) => {
+      const storePostsSnap = await getDocs(collection(db, 'stores', storeDoc.id, 'posts'));
+      await Promise.all(storePostsSnap.docs.map(d => deleteDoc(d.ref)));
+      return deleteDoc(storeDoc.ref);
+    }));
+
+    // Delete notifications sent to this user
+    const notifsSnap = await getDocs(query(collection(db, 'notifications'), where('toUid', '==', uid)));
+    await Promise.all(notifsSnap.docs.map(d => deleteDoc(d.ref)));
+
+    // Delete user profile doc
+    await deleteDoc(doc(db, 'users', uid));
+
+    // Delete Firebase Auth account (signs out automatically)
+    await user.delete();
+  };
+
   const handleRoleSelect = async (role: 'consumer' | 'vendor') => {
     if (!user) return;
     const userRef = doc(db, 'users', user.uid);
@@ -720,6 +761,7 @@ export default function App() {
             profile={profile}
             userCards={userCards}
             onLogout={handleLogout}
+            onDeleteAccount={handleDeleteAccount}
           />
         )}
       </AnimatePresence>
@@ -3048,16 +3090,20 @@ function SettingsMenu({
   onClose,
   profile,
   onLogout,
+  onDeleteAccount,
   userCards
-}: { 
-  isOpen: boolean, 
-  onClose: () => void, 
-  profile: UserProfile | null, 
+}: {
+  isOpen: boolean,
+  onClose: () => void,
+  profile: UserProfile | null,
   onLogout: () => void,
+  onDeleteAccount: () => Promise<void>,
   userCards: Card[]
 }) {
   const [showArchive, setShowArchive] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [isSeeding, setIsSeeding] = useState(false);
   const [archivedCards, setArchivedCards] = useState<Card[]>([]);
   const [transactions, setTransactions] = useState<any[]>([]);
@@ -3444,17 +3490,75 @@ function SettingsMenu({
           <MenuButton icon={<Settings />} label="Settings" sub="Account preferences" />
           <MenuButton icon={<Sparkles />} label="Seed Sample Data" sub="Generate test users & stamps" onClick={seedData} disabled={isSeeding} />
           
-          <div className="pt-4 border-t border-brand-navy/5">
-            <button 
+          <div className="pt-4 border-t border-brand-navy/5 space-y-1">
+            <button
               onClick={onLogout}
               className="w-full p-4 rounded-2xl text-red-500 font-bold text-sm flex items-center gap-3 hover:bg-red-50 transition-colors"
             >
               <LogOut size={20} />
               Sign Out
             </button>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="w-full p-4 rounded-2xl text-red-400/70 text-sm flex items-center gap-3 hover:bg-red-50 transition-colors"
+            >
+              <Trash2 size={18} />
+              Delete Account
+            </button>
           </div>
 
         </div>
+
+        <AnimatePresence>
+          {showDeleteConfirm && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm px-4 pb-8"
+              onClick={() => !deleting && setShowDeleteConfirm(false)}
+            >
+              <motion.div
+                initial={{ y: 60, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 60, opacity: 0 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                className="w-full max-w-md bg-white rounded-[2.5rem] p-8 space-y-6"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="text-center space-y-2">
+                  <div className="w-14 h-14 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Trash2 size={24} className="text-red-500" />
+                  </div>
+                  <h3 className="font-display font-bold text-xl text-brand-navy">Delete Account?</h3>
+                  <p className="text-sm text-brand-navy/50">This will permanently remove your profile, posts, and all follow connections. Your stamp history and loyalty cards will remain.</p>
+                </div>
+                <div className="space-y-3">
+                  <button
+                    onClick={async () => {
+                      setDeleting(true);
+                      try { await onDeleteAccount(); } catch { setDeleting(false); }
+                    }}
+                    disabled={deleting}
+                    className="w-full bg-red-500 text-white font-bold py-4 rounded-2xl hover:bg-red-600 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                  >
+                    {deleting
+                      ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}><Sparkles size={18} /></motion.div>
+                      : <Trash2 size={18} />}
+                    {deleting ? 'Deleting…' : 'Yes, Delete My Account'}
+                  </button>
+                  <button
+                    onClick={() => setShowDeleteConfirm(false)}
+                    disabled={deleting}
+                    className="w-full py-4 rounded-2xl text-brand-navy/60 font-bold text-sm hover:bg-brand-navy/5 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {showArchive && (
