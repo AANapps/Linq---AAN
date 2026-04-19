@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import confetti from 'canvas-confetti';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -1649,7 +1650,7 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
                         </div>
                       )}
                     </div>
-                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(previewStamps, 10)}, 1fr)` }}>
+                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(previewStamps, 5)}, 1fr)` }}>
                       {Array.from({ length: previewStamps }).map((_, i) => (
                         <div key={i} className="aspect-square rounded-lg border border-dashed border-white/20 flex items-center justify-center">
                           <span className="text-white/30 text-[8px] font-bold">{i + 1}</span>
@@ -1762,6 +1763,8 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
   const [lastTestTime, setLastTestTime] = useState(0);
   const limit = card.stamps_required || store?.stamps_required_for_reward || 10;
   const isCompleted = card.current_stamps >= limit;
+  const [unlockedReward, setUnlockedReward] = useState<string | null>(null);
+  const prevStampsRef = useRef(card.current_stamps);
 
   // Show completion popup when card is completed
   useEffect(() => {
@@ -1769,6 +1772,21 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
       setShowCompletionPopup(true);
     }
   }, [isCompleted, card.isArchived, card.isRedeemed]);
+
+  // Fire confetti when any reward tier is reached
+  useEffect(() => {
+    const prev = prevStampsRef.current;
+    const curr = card.current_stamps;
+    prevStampsRef.current = curr;
+    if (curr <= prev || card.isArchived) return;
+    const tiers = store?.rewardTiers?.length ? store.rewardTiers : (store?.reward ? [{ stamps: limit, reward: store.reward }] : []);
+    const hit = tiers.find(t => t.stamps > prev && t.stamps <= curr);
+    if (hit) {
+      setUnlockedReward(hit.reward);
+      confetti({ particleCount: 120, spread: 80, origin: { y: 0.6 }, colors: ['#f5a623', '#ffffff', '#1e3a5f'] });
+      setTimeout(() => setUnlockedReward(null), 4000);
+    }
+  }, [card.current_stamps]);
 
   const handleTestStamp = async () => {
     if (!auth.currentUser || !store) return;
@@ -2006,7 +2024,7 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
 
           return (
             <div className="rounded-[1.5rem] p-4 space-y-4" style={{ background: `linear-gradient(135deg, ${cardTheme} 0%, ${cardTheme}cc 100%)` }}>
-              <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(limit, 10)}, 1fr)` }}>
+              <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(limit, 5)}, 1fr)` }}>
                 {Array.from({ length: limit }).map((_, i) => {
                   const stampNum = i + 1;
                   const isFilled = i < card.current_stamps;
@@ -2136,6 +2154,25 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
               </button>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Tier unlock popup */}
+      <AnimatePresence>
+        {unlockedReward && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.8, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.8, y: 20 }}
+            className="fixed inset-0 z-[200] flex items-center justify-center p-8 pointer-events-none"
+          >
+            <div className="bg-brand-navy rounded-[2rem] p-8 text-center shadow-2xl max-w-xs w-full border border-brand-gold/40">
+              <div className="text-5xl mb-3">🎉</div>
+              <p className="text-brand-gold text-xs font-bold uppercase tracking-widest mb-1">Reward Unlocked!</p>
+              <p className="text-white text-2xl font-extrabold leading-tight">{unlockedReward}</p>
+              <p className="text-white/50 text-xs mt-2">Show this to the vendor to claim</p>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </>
@@ -2622,7 +2659,7 @@ function CardBuilder({ store }: { store: StoreProfile | null }) {
     }
   };
 
-  const DARK_THEMES = ['#1a1a2e', '#0f2027', '#1e3a5f', '#2d1b69', '#1a0a00', '#003d2e'];
+  const DARK_THEMES = ['#2c4a7c', '#5b3a6e', '#2e6b5a', '#7a3a2e', '#2e4a6e', '#4a3a1e'];
   const totalStamps = tiers[tiers.length - 1]?.stamps || 10;
   const tierStampSet = new Set(tiers.map(t => t.stamps));
 
@@ -2716,7 +2753,7 @@ function CardBuilder({ store }: { store: StoreProfile | null }) {
                 </div>
               )}
             </div>
-            <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(totalStamps, 10)}, 1fr)` }}>
+            <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(totalStamps, 5)}, 1fr)` }}>
               {Array.from({ length: totalStamps }).map((_, i) => {
                 const stampNum = i + 1;
                 const tier = tiers.slice(0, numTiers).find(t => t.stamps === stampNum);
