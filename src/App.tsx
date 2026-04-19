@@ -4024,13 +4024,27 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onViewSto
                   </span>
                 </p>
               ) : (
-                <p className="font-bold text-sm">{authorProfile?.name || post.authorName}</p>
+                <span
+                  className="font-bold text-sm cursor-pointer hover:text-brand-gold transition-colors"
+                  onClick={handleAvatarClick}
+                >
+                  {authorProfile?.name || post.authorName}
+                </span>
               )}
               {post.authorRole === 'vendor' && !post.wallPost && (
                 <span className="px-2 py-0.5 bg-brand-gold/10 rounded-full text-[9px] font-bold text-brand-gold uppercase tracking-wide">Vendor</span>
               )}
               {!post.wallPost && post.storeName && (
-                <span className="text-[10px] text-brand-navy/40">· {post.storeName}</span>
+                <span
+                  className="text-[10px] text-brand-navy/40 cursor-pointer hover:text-brand-gold transition-colors"
+                  onClick={async () => {
+                    if (!post.storeId || !onViewStore) return;
+                    const snap = await getDoc(doc(db, 'stores', post.storeId));
+                    if (snap.exists()) onViewStore({ id: snap.id, ...snap.data() } as StoreProfile);
+                  }}
+                >
+                  · {post.storeName}
+                </span>
               )}
             </div>
             <p className="text-[10px] text-brand-navy/40 font-medium">
