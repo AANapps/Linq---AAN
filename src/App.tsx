@@ -5706,24 +5706,26 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
         </div>
       </div>
 
-      {card ? (
-        <LoyaltyCard card={card} store={store} />
-      ) : (
-        <div className="glass-card p-8 rounded-[2.5rem] text-center space-y-4">
-          <div className="w-16 h-16 bg-brand-bg rounded-full flex items-center justify-center mx-auto">
-            <Sparkles className="w-8 h-8 text-brand-gold" />
+      {store.ownerUid !== user.uid && (
+        card ? (
+          <>
+            <div className="flex items-center gap-2 px-1">
+              <UserCheck size={15} className="text-green-400" />
+              <span className="text-green-400 font-bold text-sm">Joined</span>
+            </div>
+            <LoyaltyCard card={card} store={store} />
+          </>
+        ) : (
+          <div className="flex items-center justify-between px-1">
+            <p className="text-white/50 text-sm">Not a member yet</p>
+            <button
+              onClick={handleJoinStore}
+              className="flex items-center gap-1.5 px-5 py-2.5 rounded-2xl bg-brand-gold text-brand-navy font-bold text-sm shadow active:scale-95 transition-all"
+            >
+              <Plus size={14} /> Join
+            </button>
           </div>
-          <div>
-            <p className="font-bold">Join {store.name} Loyalty</p>
-            <p className="text-xs text-brand-navy/40">Start collecting stamps and earn rewards!</p>
-          </div>
-          <button 
-            onClick={handleJoinStore}
-            className="w-full bg-brand-navy text-white py-4 rounded-2xl font-bold hover:bg-brand-navy/90 transition-all"
-          >
-            Join Program
-          </button>
-        </div>
+        )
       )}
 
       {showStats && (
