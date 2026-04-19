@@ -80,7 +80,9 @@ import {
   ChevronDown,
   Palette,
   Building2,
-  Edit3
+  Edit3,
+  Save,
+  CreditCard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
@@ -196,6 +198,7 @@ interface Card {
   last_tap_timestamp: any;
   isArchived?: boolean;
   isRedeemed?: boolean;
+  stamps_required?: number;
 }
 
 interface Notification {
@@ -1198,6 +1201,7 @@ function ConsumerApp({ activeTab, setActiveTab, profile, user, onViewStore, onVi
         store_id: store.id,
         current_stamps: 0,
         total_completed_cycles: 0,
+        stamps_required: store.stamps_required_for_reward || 10,
         last_tap_timestamp: serverTimestamp(),
         isArchived: false,
         isRedeemed: false,
@@ -1310,6 +1314,10 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
   const [lastIssueTime, setLastIssueTime] = useState(0);
   const [issueStatus, setIssueStatus] = useState<{ type: 'success' | 'error', message: string } | null>(null);
   const [recentTransactions, setRecentTransactions] = useState<any[]>([]);
+  const [cardStampsInput, setCardStampsInput] = useState('');
+  const [cardRewardInput, setCardRewardInput] = useState('');
+  const [isSavingCard, setIsSavingCard] = useState(false);
+  const [cardSaved, setCardSaved] = useState(false);
 
   useEffect(() => {
     if (!store) return;
@@ -1328,7 +1336,10 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
     const q = query(collection(db, 'stores'), where('ownerUid', '==', user.uid));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       if (!snapshot.empty) {
-        setStore({ id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as StoreProfile);
+        const s = { id: snapshot.docs[0].id, ...snapshot.docs[0].data() } as StoreProfile;
+        setStore(s);
+        setCardStampsInput(String(s.stamps_required_for_reward || 10));
+        setCardRewardInput(s.reward || '');
       }
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, 'stores');
@@ -1413,6 +1424,7 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
             store_id: store.id,
             current_stamps: newStamps,
             total_completed_cycles: newCycles,
+            stamps_required: limit,
             last_tap_timestamp: serverTimestamp(),
             isArchived: false
           });
@@ -1435,6 +1447,25 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
       setIssueStatus({ type: 'error', message: 'Failed to issue stamp' });
     } finally {
       setIsIssuing(false);
+    }
+  };
+
+  const handleSaveCardSettings = async () => {
+    if (!store) return;
+    const stamps = parseInt(cardStampsInput);
+    if (!stamps || stamps < 1 || stamps > 50) return;
+    setIsSavingCard(true);
+    try {
+      await updateDoc(doc(db, 'stores', store.id), {
+        stamps_required_for_reward: stamps,
+        reward: cardRewardInput.trim(),
+      });
+      setCardSaved(true);
+      setTimeout(() => setCardSaved(false), 2000);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSavingCard(false);
     }
   };
 
@@ -1564,6 +1595,42 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
             </div>
           </div>
 
+          {/* Card Settings */}
+          <div className="glass-card p-6 rounded-[2.5rem] space-y-5">
+            <div className="flex items-center gap-2">
+              <CreditCard size={18} className="text-brand-gold" />
+              <h3 className="font-bold text-lg">Card Settings</h3>
+            </div>
+            <p className="text-xs text-brand-navy/40 -mt-2">Changes apply to new cycles. Users currently in progress finish on their existing stamp count.</p>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Stamps Required for Reward</label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                value={cardStampsInput}
+                onChange={e => setCardStampsInput(e.target.value)}
+                className="w-full px-5 py-4 rounded-2xl bg-brand-bg border border-brand-navy/10 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-brand-gold/30"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Reward (e.g. Free Coffee)</label>
+              <input
+                value={cardRewardInput}
+                onChange={e => setCardRewardInput(e.target.value)}
+                placeholder="e.g. Free coffee, Free class..."
+                className="w-full px-5 py-4 rounded-2xl bg-brand-bg border border-brand-navy/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-gold/30"
+              />
+            </div>
+            <button
+              onClick={handleSaveCardSettings}
+              disabled={isSavingCard}
+              className="w-full bg-brand-navy text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+            >
+              {cardSaved ? <><CheckCircle2 size={16} /> Saved!</> : isSavingCard ? 'Saving...' : <><Save size={16} /> Save Card Settings</>}
+            </button>
+          </div>
+
           <div className="space-y-4">
             <h3 className="font-display text-xl font-bold">Recent Activity</h3>
             {recentTransactions.map(tx => (
@@ -1654,7 +1721,7 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
   const [testQty, setTestQty] = useState(1);
   const [isTestIssuing, setIsTestIssuing] = useState(false);
   const [lastTestTime, setLastTestTime] = useState(0);
-  const limit = store?.stamps_required_for_reward || 10;
+  const limit = card.stamps_required || store?.stamps_required_for_reward || 10;
   const isCompleted = card.current_stamps >= limit;
 
   // Show completion popup when card is completed
@@ -1730,11 +1797,12 @@ function LoyaltyCard({ card, store, onViewStore }: { card: Card, store?: StorePr
         isRedeemed: true,
         archivedAt: serverTimestamp(),
       });
-      // Reset the active card for the next loyalty cycle
+      // Reset the active card for the next loyalty cycle, locking in current store stamp count
       await updateDoc(doc(db, 'cards', card.id), {
         current_stamps: 0,
         isRedeemed: false,
         isArchived: false,
+        stamps_required: store?.stamps_required_for_reward || limit,
         last_tap_timestamp: serverTimestamp(),
       });
       // Increment rewards counter on profile
@@ -4754,6 +4822,7 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
           store_id: store.id,
           current_stamps: 0,
           total_completed_cycles: 0,
+          stamps_required: store.stamps_required_for_reward || 10,
           last_tap_timestamp: serverTimestamp(),
           isArchived: false,
           isRedeemed: false,
@@ -5676,6 +5745,7 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
       store_id: store.id,
       current_stamps: 0,
       total_completed_cycles: 0,
+      stamps_required: store.stamps_required_for_reward || 10,
       last_tap_timestamp: serverTimestamp(),
       isArchived: false
     });
