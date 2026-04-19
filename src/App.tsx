@@ -5546,8 +5546,12 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
   }, [store.ownerUid]);
 
   useEffect(() => {
-    const q = query(collection(db, 'store_reviews'), where('storeId', '==', store.id), orderBy('createdAt', 'desc'));
-    return onSnapshot(q, snap => setStoreReviews(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
+    const q = query(collection(db, 'store_reviews'), where('storeId', '==', store.id));
+    return onSnapshot(q, snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+      docs.sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
+      setStoreReviews(docs);
+    }, (err) => console.error('store_reviews listener:', err));
   }, [store.id]);
 
   useEffect(() => {
