@@ -262,6 +262,9 @@ interface GlobalPost {
   storeId?: string;
   storeName?: string;
   wallPost?: boolean;
+  toUid?: string;
+  toName?: string;
+  toPhoto?: string;
   content: string;
   postType: 'post' | 'poll';
   pollOptions?: { text: string }[];
@@ -4023,6 +4026,25 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onViewSto
                     {post.storeName}
                   </span>
                 </p>
+              ) : post.wallPost && post.toUid ? (
+                <p className="text-sm leading-snug">
+                  <span
+                    className="font-bold cursor-pointer hover:text-brand-gold transition-colors"
+                    onClick={handleAvatarClick}
+                  >
+                    {authorProfile?.name || post.authorName}
+                  </span>
+                  <span className="text-brand-navy/30 mx-1">›</span>
+                  <span
+                    className="font-bold cursor-pointer hover:text-brand-gold transition-colors"
+                    onClick={async () => {
+                      const snap = await getDoc(doc(db, 'users', post.toUid!));
+                      if (snap.exists()) onViewUser({ uid: snap.id, ...snap.data() } as UserProfile);
+                    }}
+                  >
+                    {post.toName}
+                  </span>
+                </p>
               ) : (
                 <span
                   className="font-bold text-sm cursor-pointer hover:text-brand-gold transition-colors"
@@ -5851,16 +5873,41 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
     if (!newReview.trim()) return;
     setIsPosting(true);
     try {
+      // Fetch fresh author profile for accurate name/photo
+      const authorSnap = await getDoc(doc(db, 'users', currentUser.uid)).catch(() => null);
+      const authorData = authorSnap?.exists() ? authorSnap.data() : null;
+      const authorName = authorData?.name || currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous';
+      const authorPhoto = authorData?.photoURL || currentUser.photoURL || '';
+      const authorRole = authorData?.role || 'consumer';
+
       await addDoc(collection(db, 'user_reviews'), {
         fromUid: currentUser.uid,
-        fromName: currentUser.displayName || currentUser.email?.split('@')[0] || 'Anonymous',
-        fromPhoto: currentUser.photoURL || '',
+        fromName: authorName,
+        fromPhoto: authorPhoto,
         toUid: targetUser.uid,
         content: newReview,
         rating,
         likesCount: 0,
         createdAt: serverTimestamp()
       });
+
+      // Cross-post to global feed so all users can see it
+      await addDoc(collection(db, 'global_posts'), {
+        authorUid: currentUser.uid,
+        authorName,
+        authorPhoto,
+        authorRole,
+        toUid: targetUser.uid,
+        toName: targetUser.name,
+        toPhoto: targetUser.photoURL || '',
+        wallPost: true,
+        content: newReview,
+        postType: 'post',
+        likesCount: 0,
+        likedBy: [],
+        createdAt: serverTimestamp()
+      });
+
       setNewReview('');
       setRating(5);
     } catch (error) {
