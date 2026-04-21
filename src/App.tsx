@@ -159,6 +159,8 @@ type Category = 'Food' | 'Beauty' | 'Barber' | 'Gym' | 'Parking' | 'Retail';
 
 interface ConsumerOnboardingData {
   type: 'consumer';
+  name: string;
+  handle: string;
   gender: string;
   birthday: string;
   location: { lat: number; lng: number; city?: string } | null;
@@ -782,6 +784,8 @@ export default function App() {
     if (!user) return;
     if (data.type === 'consumer') {
       await updateDoc(doc(db, 'users', user.uid), {
+        name: data.name,
+        handle: data.handle,
         ...(data.gender ? { gender: data.gender } : {}),
         ...(data.birthday ? { birthday: data.birthday } : {}),
         ...(data.location ? { location: data.location } : {}),
@@ -1360,12 +1364,15 @@ function OnboardingScreen({ user, role, onComplete }: {
   const isVendor = role === 'vendor';
   const STEPS = isVendor
     ? ['name', 'category', 'contact', 'location'] as const
-    : ['gender', 'birthday', 'location'] as const;
+    : ['identity', 'gender', 'birthday', 'location'] as const;
 
   const [step, setStep] = React.useState(0);
   const [saving, setSaving] = React.useState(false);
 
   // Consumer fields
+  const [fullName, setFullName] = React.useState('');
+  const [handle, setHandle] = React.useState('');
+  const [handleError, setHandleError] = React.useState('');
   const [gender, setGender] = React.useState('');
   const [birthday, setBirthday] = React.useState('');
 
@@ -1407,21 +1414,66 @@ function OnboardingScreen({ user, role, onComplete }: {
     : step === 1 ? !!category
     : step === 2 ? address.trim().length > 0 && phone.trim().length > 0
     : locationStatus === 'granted' || locationStatus === 'denied'
-    : step === 0 ? !!gender
-    : step === 1 ? !!birthday
+    : step === 0 ? fullName.trim().length > 0 && handle.trim().length > 0 && !handleError
+    : step === 1 ? !!gender
+    : step === 2 ? !!birthday
     : locationStatus === 'granted' || locationStatus === 'denied';
+
+  const validateHandle = (val: string) => {
+    const clean = val.toLowerCase().replace(/\s/g, '');
+    setHandle(clean);
+    if (clean.length > 0 && clean.length < 3) setHandleError('Handle must be at least 3 characters');
+    else if (!/^[a-z0-9_]*$/.test(clean)) setHandleError('Only letters, numbers and underscores');
+    else setHandleError('');
+  };
 
   const handleFinish = async () => {
     setSaving(true);
     if (isVendor) {
       await onComplete({ type: 'vendor', businessName, category, address, phone, description, location: locationData });
     } else {
-      await onComplete({ type: 'consumer', gender, birthday, location: locationData });
+      await onComplete({ type: 'consumer', name: fullName.trim(), handle, gender, birthday, location: locationData });
     }
   };
 
   const consumerSteps = [
-    // Step 0 — Gender
+    // Step 0 — Identity (name + handle)
+    <>
+      <div className="w-14 h-14 bg-brand-gold/10 rounded-full flex items-center justify-center mx-auto mb-4">
+        <UserCheck className="w-7 h-7 text-brand-gold" />
+      </div>
+      <h2 className="font-display font-bold text-2xl text-brand-navy mb-1">Set up your profile</h2>
+      <p className="text-sm text-brand-navy/40 mb-8">Your name and handle help businesses and friends recognise you</p>
+      <div className="w-full space-y-3 text-left">
+        <div>
+          <input
+            type="text"
+            value={fullName}
+            onChange={e => setFullName(e.target.value)}
+            placeholder="Full name"
+            className="w-full px-5 py-4 rounded-2xl bg-white border-2 border-brand-navy/10 text-brand-navy font-bold text-base focus:outline-none focus:border-brand-gold/60 placeholder:font-normal placeholder:text-brand-navy/30"
+          />
+        </div>
+        <div>
+          <div className="relative">
+            <span className="absolute left-5 top-1/2 -translate-y-1/2 text-brand-navy/40 font-bold text-sm">@</span>
+            <input
+              type="text"
+              value={handle}
+              onChange={e => validateHandle(e.target.value)}
+              placeholder="yourhandle"
+              className={`w-full pl-9 pr-5 py-4 rounded-2xl bg-white border-2 text-brand-navy text-sm font-medium focus:outline-none focus:border-brand-gold/60 placeholder:text-brand-navy/30 ${handleError ? 'border-red-300' : 'border-brand-navy/10'}`}
+            />
+          </div>
+          {handleError ? (
+            <p className="text-xs text-red-500 mt-1.5 pl-1">{handleError}</p>
+          ) : (
+            <p className="text-xs text-brand-navy/30 mt-1.5 pl-1">This cannot be changed later</p>
+          )}
+        </div>
+      </div>
+    </>,
+    // Step 1 — Gender
     <>
       <div className="w-14 h-14 bg-brand-gold/10 rounded-full flex items-center justify-center mx-auto mb-4">
         <UserCheck className="w-7 h-7 text-brand-gold" />
@@ -1600,7 +1652,7 @@ function OnboardingScreen({ user, role, onComplete }: {
             ? <><motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}><Sparkles size={16} /></motion.div> Setting up…</>
             : step < STEPS.length - 1 ? 'Continue' : isVendor ? 'Launch My Business' : 'Get Started'}
         </button>
-        {step < STEPS.length - 1 && !isVendor && (
+        {step > 0 && step < STEPS.length - 1 && !isVendor && (
           <button onClick={() => setStep(s => s + 1)} className="w-full py-3 text-xs text-brand-navy/30 hover:text-brand-navy/50 transition-colors">
             Skip for now
           </button>
@@ -3928,7 +3980,7 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
   const handleSave = async () => {
     setSaving(true);
     try {
-      const profileUpdates: any = { name, handle };
+      const profileUpdates: any = { name };
       await updateDoc(doc(db, 'users', profile.uid), profileUpdates);
 
       if (profile.role === 'vendor' && store) {
@@ -3992,15 +4044,59 @@ function ProfileSettingsModal({ profile, user, onClose, onLogout, onDeleteAccoun
             className="w-full px-5 py-4 rounded-2xl bg-white border border-brand-navy/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-gold/30" />
         </div>
 
-        {/* Handle */}
+        {/* Handle — read-only */}
         <div className="space-y-2">
-          <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Handle</label>
-          <div className="relative">
-            <span className="absolute left-5 top-1/2 -translate-y-1/2 text-brand-navy/40 font-bold text-sm">@</span>
-            <input value={handle} onChange={e => setHandle(e.target.value.toLowerCase().replace(/\s/g, ''))} placeholder="yourhandle"
-              className="w-full pl-9 pr-5 py-4 rounded-2xl bg-white border border-brand-navy/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-gold/30" />
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Handle</label>
+            <span className="text-[10px] text-brand-navy/30 flex items-center gap-1"><Lock size={9} /> Cannot be changed</span>
+          </div>
+          <div className="w-full px-5 py-4 rounded-2xl bg-brand-navy/5 border border-brand-navy/10 text-sm font-medium text-brand-navy/60 flex items-center gap-1">
+            <span className="text-brand-navy/30">@</span>{handle || profile.handle || '—'}
           </div>
         </div>
+
+        {/* Consumer info fields — read-only */}
+        {profile.role === 'consumer' && (
+          <div className="space-y-4">
+            <SectionLabel icon={<UserIcon size={14} className="text-brand-gold" />} label="Your Information" />
+            <div className="space-y-3">
+              {/* Email */}
+              <div className="flex items-center justify-between bg-white px-5 py-4 rounded-2xl border border-brand-navy/10">
+                <div className="flex items-center gap-3">
+                  <Mail size={15} className="text-brand-navy/30 shrink-0" />
+                  <span className="text-xs font-bold text-brand-navy/40 uppercase tracking-widest">Email</span>
+                </div>
+                <span className="text-sm text-brand-navy/70 font-medium truncate max-w-[160px]">{profile.email}</span>
+              </div>
+              {/* Gender */}
+              <div className="flex items-center justify-between bg-white px-5 py-4 rounded-2xl border border-brand-navy/10">
+                <div className="flex items-center gap-3">
+                  <UserCheck size={15} className="text-brand-navy/30 shrink-0" />
+                  <span className="text-xs font-bold text-brand-navy/40 uppercase tracking-widest">Gender</span>
+                </div>
+                <span className="text-sm text-brand-navy/70 font-medium">{profile.gender || '—'}</span>
+              </div>
+              {/* Birthday */}
+              <div className="flex items-center justify-between bg-white px-5 py-4 rounded-2xl border border-brand-navy/10">
+                <div className="flex items-center gap-3">
+                  <Calendar size={15} className="text-brand-navy/30 shrink-0" />
+                  <span className="text-xs font-bold text-brand-navy/40 uppercase tracking-widest">Birthday</span>
+                </div>
+                <span className="text-sm text-brand-navy/70 font-medium">
+                  {profile.birthday ? new Date(profile.birthday).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                </span>
+              </div>
+              {/* Location */}
+              <div className="flex items-center justify-between bg-white px-5 py-4 rounded-2xl border border-brand-navy/10">
+                <div className="flex items-center gap-3">
+                  <MapPin size={15} className="text-brand-navy/30 shrink-0" />
+                  <span className="text-xs font-bold text-brand-navy/40 uppercase tracking-widest">Location</span>
+                </div>
+                <span className="text-sm text-brand-navy/70 font-medium">{profile.location?.city || '—'}</span>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Business Fields */}
         {profile.role === 'vendor' && (
