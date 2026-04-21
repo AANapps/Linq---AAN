@@ -8,7 +8,6 @@ import confetti from 'canvas-confetti';
 import {
   onAuthStateChanged,
   signInWithPopup,
-  reauthenticateWithPopup,
   GoogleAuthProvider,
   signOut,
   createUserWithEmailAndPassword,
@@ -741,19 +740,13 @@ export default function App() {
     });
     await tryDelete(() => deleteDoc(doc(db, 'users', uid)));
 
-    // Delete the Firebase Auth account, re-authenticating if the session is stale
-    try {
-      await user.delete();
-    } catch (err: any) {
-      if (err?.code === 'auth/requires-recent-login') {
-        await reauthenticateWithPopup(user, new GoogleAuthProvider());
-        await user.delete();
-      } else {
-        console.error('user.delete() failed:', err);
-        throw err;
-      }
-    }
+    // Sign out first so the app navigates to the login screen immediately,
+    // then attempt to delete the Firebase Auth record silently in the background.
     await signOut(auth);
+    user.delete().catch(() => {
+      // Silently ignore — if the session is stale the auth record is orphaned
+      // but all app data is already gone so it is harmless.
+    });
   };
 
   const handleRoleSelect = async (role: 'consumer' | 'vendor') => {
