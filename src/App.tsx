@@ -611,6 +611,7 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
+        setLoading(true);
         const isEmailProvider = firebaseUser.providerData.some(p => p.providerId === 'password');
         if (isEmailProvider && !firebaseUser.emailVerified) {
           setNeedsEmailVerification(true);
