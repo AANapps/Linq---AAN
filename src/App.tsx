@@ -931,12 +931,13 @@ export default function App() {
               }}
             />
           ) : viewingUser ? (
-            <PublicUserProfile 
-              key="user-profile" 
-              targetUser={viewingUser} 
-              onBack={() => setViewingUser(null)} 
+            <PublicUserProfile
+              key="user-profile"
+              targetUser={viewingUser}
+              onBack={() => setViewingUser(null)}
               currentUser={user}
               currentProfile={profile}
+              onViewUser={(u) => { setViewingUser(null); handleViewUser(u); }}
               onMessage={(chatId) => {
                 setActiveChatId(chatId);
                 setActiveTab('messages');
@@ -3048,7 +3049,7 @@ function DiscoveryScreen({ stores, cards, onJoin, onViewStore, onViewUser }: { s
   );
 }
 
-function WallPostItem({ post, currentUser, wallOwnerUid }: { post: any, currentUser: FirebaseUser, wallOwnerUid?: string, key?: React.Key }) {
+function WallPostItem({ post, currentUser, wallOwnerUid, onViewUser }: { post: any, currentUser: FirebaseUser, wallOwnerUid?: string, onViewUser?: (u: UserProfile) => void, key?: React.Key }) {
   const [likes, setLikes] = useState<string[]>([]);
   const [replies, setReplies] = useState<any[]>([]);
   const [showReplyInput, setShowReplyInput] = useState(false);
@@ -3133,10 +3134,21 @@ function WallPostItem({ post, currentUser, wallOwnerUid }: { post: any, currentU
     }
   };
 
+  const handleViewProfile = async (uid: string) => {
+    if (!onViewUser || !uid) return;
+    const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
+    if (snap?.exists()) { onViewUser({ uid: snap.id, ...snap.data() } as UserProfile); return; }
+    const vSnap = await getDoc(doc(db, 'vendors', uid)).catch(() => null);
+    if (vSnap?.exists()) onViewUser({ uid: vSnap.id, ...vSnap.data() } as UserProfile);
+  };
+
   return (
     <div className="glass-card p-6 rounded-[2.5rem] space-y-4 animation-fade-in">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <button
+          onClick={() => handleViewProfile(post.fromUid)}
+          className="flex items-center gap-3 hover:opacity-80 transition-opacity text-left"
+        >
           <div className="w-10 h-10 rounded-full overflow-hidden border border-brand-navy/5">
             <img src={post.fromPhoto} alt="" className="w-full h-full object-cover" />
           </div>
@@ -3146,7 +3158,7 @@ function WallPostItem({ post, currentUser, wallOwnerUid }: { post: any, currentU
               {post.createdAt ? format(post.createdAt.toDate(), 'MMM d, h:mm a') : 'Just now'}
             </p>
           </div>
-        </div>
+        </button>
         <div className="flex items-center gap-2">
           {canDelete && (
             <button
@@ -3183,12 +3195,14 @@ function WallPostItem({ post, currentUser, wallOwnerUid }: { post: any, currentU
         <div className="mt-4 space-y-3 pl-4 border-l-2 border-brand-navy/5">
           {replies.map(reply => (
             <div key={reply.id} className="flex gap-3">
-              <div className="w-6 h-6 rounded-full overflow-hidden shrink-0">
-                <img src={reply.fromPhoto} alt="" className="w-full h-full object-cover" />
-              </div>
+              <button onClick={() => handleViewProfile(reply.fromUid)} className="shrink-0 hover:opacity-80 transition-opacity">
+                <div className="w-6 h-6 rounded-full overflow-hidden">
+                  <img src={reply.fromPhoto} alt="" className="w-full h-full object-cover" />
+                </div>
+              </button>
               <div>
                 <div className="flex items-center gap-2">
-                  <p className="font-bold text-[10px] text-brand-navy">{reply.fromName}</p>
+                  <button onClick={() => handleViewProfile(reply.fromUid)} className="font-bold text-[10px] text-brand-navy hover:text-brand-gold transition-colors">{reply.fromName}</button>
                   <p className="text-[8px] text-brand-navy/40">{reply.createdAt ? format(reply.createdAt.toDate(), 'h:mm a') : ''}</p>
                 </div>
                 <p className="text-xs text-brand-navy/70">{reply.content}</p>
@@ -3842,7 +3856,7 @@ function ProfileScreen({ profile, userCards, onLogout, onDeleteAccount, onViewUs
 
           <div className="space-y-3">
             {wallPosts.map(post => (
-              <WallPostItem key={post.id} post={post} currentUser={user} wallOwnerUid={profile?.uid} />
+              <WallPostItem key={post.id} post={post} currentUser={user} wallOwnerUid={profile?.uid} onViewUser={onViewUser} />
             ))}
           </div>
 
@@ -4944,6 +4958,14 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onViewSto
   }, [post.authorUid, post.storeId, post.authorRole]);
 
   const isLiked = currentUser ? (post.likedBy || []).includes(currentUser.uid) : false;
+  const handleViewCommentAuthor = async (uid: string) => {
+    if (!onViewUser || !uid) return;
+    const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
+    if (snap?.exists()) { onViewUser({ uid: snap.id, ...snap.data() } as UserProfile); return; }
+    const vSnap = await getDoc(doc(db, 'vendors', uid)).catch(() => null);
+    if (vSnap?.exists()) onViewUser({ uid: vSnap.id, ...vSnap.data() } as UserProfile);
+  };
+
   const isOwn = currentUser?.uid === post.authorUid;
   const totalVotes = post.postType === 'poll'
     ? Object.values(post.pollVotes || {}).reduce((s, arr) => s + (arr?.length || 0), 0)
@@ -5245,12 +5267,14 @@ function FeedPostCard({ post, currentUser, currentProfile, onViewUser, onViewSto
             const commentLiked = currentUser ? (comment.likedBy || []).includes(currentUser.uid) : false;
             return (
               <div key={comment.id} className="flex gap-2.5">
-                <div className="w-7 h-7 rounded-full overflow-hidden border border-black/5 shrink-0 mt-0.5">
-                  <img src={comment.fromPhoto || `https://i.pravatar.cc/28?u=${comment.fromUid}`} alt="" className="w-full h-full object-cover" />
-                </div>
+                <button onClick={() => handleViewCommentAuthor(comment.fromUid)} className="shrink-0 mt-0.5 hover:opacity-80 transition-opacity">
+                  <div className="w-7 h-7 rounded-full overflow-hidden border border-black/5">
+                    <img src={comment.fromPhoto || `https://i.pravatar.cc/28?u=${comment.fromUid}`} alt="" className="w-full h-full object-cover" />
+                  </div>
+                </button>
                 <div className="flex-1 min-w-0">
                   <div className="bg-brand-bg rounded-2xl px-3 py-2">
-                    <p className="text-xs font-bold text-brand-navy mb-0.5">{comment.fromName}</p>
+                    <button onClick={() => handleViewCommentAuthor(comment.fromUid)} className="text-xs font-bold text-brand-navy mb-0.5 hover:text-brand-gold transition-colors block">{comment.fromName}</button>
                     <p className="text-xs text-brand-navy/70 leading-relaxed">{comment.content}</p>
                   </div>
                   <div className="flex items-center gap-3 mt-1 px-1">
@@ -7167,7 +7191,7 @@ function StoreProfileView({ store, onBack, user, profile, onViewUser, onMessage 
   );
 }
 
-function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser, currentProfile, onViewStore, onMessage }: { targetUser: UserProfile, onBack: () => void, currentUser: FirebaseUser, currentProfile: UserProfile | null, onViewStore: (s: StoreProfile) => void, onMessage?: (uid: string) => void, key?: React.Key }) {
+function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser, currentProfile, onViewStore, onViewUser, onMessage }: { targetUser: UserProfile, onBack: () => void, currentUser: FirebaseUser, currentProfile: UserProfile | null, onViewStore: (s: StoreProfile) => void, onViewUser: (u: UserProfile) => void, onMessage?: (uid: string) => void, key?: React.Key }) {
   const [targetUser, setTargetUser] = useState<UserProfile>(initialTargetUser);
   const [cards, setCards] = useState<Card[]>([]);
   const [allCards, setAllCards] = useState<Card[]>([]);
@@ -7551,7 +7575,7 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
           )}
           <div className="space-y-4">
             {reviews.map(review => (
-              <WallPostItem key={review.id} post={review} currentUser={currentUser} wallOwnerUid={targetUser.uid} />
+              <WallPostItem key={review.id} post={review} currentUser={currentUser} wallOwnerUid={targetUser.uid} onViewUser={onViewUser} />
             ))}
             {reviews.length === 0 && (
               <p className="text-center py-12 text-xs text-brand-navy/20 font-bold uppercase tracking-widest italic">No wall posts yet</p>
@@ -7566,7 +7590,7 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
               post={post}
               currentUser={currentUser}
               currentProfile={currentProfile}
-              onViewUser={() => {}}
+              onViewUser={onViewUser}
               onLike={async (p) => {
                 const ref = doc(db, 'global_posts', p.id);
                 const alreadyLiked = (p.likedBy || []).includes(currentUser.uid);
