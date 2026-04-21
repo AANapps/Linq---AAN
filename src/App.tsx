@@ -1889,6 +1889,7 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
   const [isSavingCard, setIsSavingCard] = useState(false);
   const [cardSaved, setCardSaved] = useState(false);
   const [statModal, setStatModal] = useState<null | 'members' | 'stamps' | 'activeCards'>(null);
+  const [statModalSearch, setStatModalSearch] = useState('');
   const [memberProfiles, setMemberProfiles] = useState<Map<string, UserProfile>>(new Map());
 
   useEffect(() => {
@@ -1936,6 +1937,7 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
 
   const openStatModal = async (type: 'members' | 'stamps' | 'activeCards') => {
     setStatModal(type);
+    setStatModalSearch('');
     const uids = [...new Set(storeCards.map(c => c.user_id))];
     const missing = uids.filter(uid => !memberProfiles.has(uid));
     if (missing.length === 0) return;
@@ -2153,8 +2155,15 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
             {statModal && (() => {
               const titles: Record<string, string> = { members: 'Members', stamps: 'Stamps Breakdown', activeCards: 'Active Cards' };
               const uniqueUids = [...new Set<string>(storeCards.map(c => c.user_id))];
+              const q = statModalSearch.toLowerCase();
 
-              const memberRows = uniqueUids.map(uid => {
+              const matchesSearch = (uid: string) => {
+                if (!q) return true;
+                const prof = memberProfiles.get(uid);
+                return (prof?.name || '').toLowerCase().includes(q) || (prof?.handle || '').toLowerCase().includes(q) || uid.toLowerCase().includes(q);
+              };
+
+              const memberRows = uniqueUids.filter(matchesSearch).map(uid => {
                 const cards = storeCards.filter(c => c.user_id === uid);
                 const prof = memberProfiles.get(uid);
                 const totalStamps = cards.reduce((s, c) => s + (c.current_stamps || 0) + ((c.total_completed_cycles || 0) * stampsPerReward), 0);
@@ -2162,17 +2171,28 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
                 return { uid, prof, totalStamps, cycles };
               }).sort((a, b) => b.totalStamps - a.totalStamps);
 
-              const stampRows = [...storeCards].sort((a, b) => {
+              const stampRows = [...storeCards].filter(c => matchesSearch(c.user_id)).sort((a, b) => {
                 const ta = (a.current_stamps || 0) + ((a.total_completed_cycles || 0) * stampsPerReward);
                 const tb = (b.current_stamps || 0) + ((b.total_completed_cycles || 0) * stampsPerReward);
                 return tb - ta;
               });
 
-              const activeRows = storeCards.filter(c => !c.isArchived).sort((a, b) => (b.current_stamps || 0) - (a.current_stamps || 0));
+              const activeRows = storeCards.filter(c => !c.isArchived && matchesSearch(c.user_id)).sort((a, b) => (b.current_stamps || 0) - (a.current_stamps || 0));
 
               return (
                 <Modal title={titles[statModal]} onClose={() => setStatModal(null)}>
-                  <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+                  <div className="relative mb-3">
+                    <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-navy/30 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={statModalSearch}
+                      onChange={e => setStatModalSearch(e.target.value)}
+                      placeholder="Search by name or handle…"
+                      className="w-full pl-9 pr-4 py-2.5 rounded-2xl bg-brand-bg border border-brand-navy/10 text-sm focus:outline-none focus:ring-2 focus:ring-brand-gold/40"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
                     {statModal === 'members' && memberRows.map(({ uid, prof, totalStamps, cycles }) => (
                       <div key={uid} className="flex items-center gap-3 p-3 rounded-2xl bg-brand-bg">
                         <div className="w-9 h-9 rounded-full overflow-hidden bg-brand-navy/10 shrink-0 flex items-center justify-center">
