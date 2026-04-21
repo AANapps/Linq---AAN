@@ -94,7 +94,9 @@ import {
   Lock,
   Eye,
   EyeOff,
-  AlertCircle
+  AlertCircle,
+  RefreshCw,
+  Award
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
@@ -1922,7 +1924,13 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
   }, [store?.id]);
 
   const totalMembers = new Set(storeCards.map(c => c.user_id)).size;
-  const totalStampsGiven = storeCards.reduce((sum, c) => sum + (c.current_stamps || 0) + ((c.total_completed_cycles || 0) * (store?.stamps_required_for_reward || 10)), 0);
+  const stampsPerReward = store?.stamps_required_for_reward || 10;
+  const totalStampsGiven = storeCards.reduce((sum, c) => sum + (c.current_stamps || 0) + ((c.total_completed_cycles || 0) * stampsPerReward), 0);
+  const activeStoreCards = storeCards.filter(c => !c.isArchived).length;
+  const returningUsers = storeCards.filter(c => (c.total_completed_cycles || 0) > 0).length;
+  const returnRate = totalMembers > 0 ? Math.round((returningUsers / totalMembers) * 100) : 0;
+  const totalCompletedCycles = storeCards.reduce((sum, c) => sum + (c.total_completed_cycles || 0), 0);
+  const redemptionRate = Math.round((totalCompletedCycles / Math.max(1, totalStampsGiven / stampsPerReward)) * 100);
 
   const handleIssueStamp = async () => {
     if (!customerHandle || !store) return;
@@ -2113,6 +2121,9 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
           <div className="grid grid-cols-2 gap-4">
             <StatSquare icon={<Users className="text-blue-500" />} label="Members" value={String(totalMembers)} />
             <StatSquare icon={<TrendingUp className="text-green-500" />} label="Stamps" value={String(totalStampsGiven)} />
+            <StatSquare icon={<Wallet className="text-purple-500" />} label="Active Cards" value={String(activeStoreCards)} />
+            <StatSquare icon={<RefreshCw className="text-orange-500" />} label="Return Rate" value={`${returnRate}%`} />
+            <StatSquare icon={<Award className="text-brand-gold" />} label="Redemption Rate" value={`${redemptionRate}%`} />
           </div>
 
           <div className="bg-brand-navy p-8 rounded-[2.5rem] text-white text-center">
@@ -2741,7 +2752,7 @@ function DiscoveryScreen({ stores, cards, onJoin, onViewStore, onViewUser }: { s
   useEffect(() => {
     if (searchType === 'users') {
       setLoadingUsers(true);
-      const q = query(collection(db, 'users'), limit(50));
+      const q = query(collection(db, 'users'), where('role', '==', 'consumer'), limit(50));
       getDocs(q).then(snap => {
         setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
         setLoadingUsers(false);
@@ -3499,59 +3510,18 @@ function ProfileScreen({ profile, userCards, onLogout, onDeleteAccount, onViewUs
           </div>
         </div>
 
-        {/* Business stats */}
-        <div className="grid grid-cols-2 gap-3">
-          {(vis?.members !== false) && (
-            <div className="glass-card p-5 rounded-[2rem]">
-              <div className="flex items-center gap-2 mb-1">
-                <Users size={16} className="text-brand-gold" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-brand-navy/40">Members</span>
-              </div>
-              <p className="text-3xl font-bold">{totalMembers}</p>
-              <p className="text-[10px] text-brand-navy/40 mt-0.5">total cardholders</p>
-            </div>
-          )}
-          {(vis?.stamps !== false) && (
-            <div className="glass-card p-5 rounded-[2rem]">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle2 size={16} className="text-brand-gold" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-brand-navy/40">Stamps</span>
-              </div>
-              <p className="text-3xl font-bold">{totalStampsGiven}</p>
-              <p className="text-[10px] text-brand-navy/40 mt-0.5">given lifetime</p>
-            </div>
-          )}
-          {(vis?.activeCards !== false) && (
-            <div className="glass-card p-5 rounded-[2rem]">
-              <div className="flex items-center gap-2 mb-1">
-                <Wallet size={16} className="text-brand-gold" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-brand-navy/40">Active</span>
-              </div>
-              <p className="text-3xl font-bold">{activeStoreCards}</p>
-              <p className="text-[10px] text-brand-navy/40 mt-0.5">active cards</p>
-            </div>
-          )}
-          {(vis?.returnRate !== false) && (
-            <div className="glass-card p-5 rounded-[2rem]">
-              <div className="flex items-center gap-2 mb-1">
-                <TrendingUp size={16} className="text-brand-gold" />
-                <span className="text-[10px] font-bold uppercase tracking-widest text-brand-navy/40">Return Rate</span>
-              </div>
-              <p className="text-3xl font-bold">{returnRate}<span className="text-lg">%</span></p>
-              <p className="text-[10px] text-brand-navy/40 mt-0.5">avg user return</p>
-            </div>
-          )}
-        </div>
-
         {/* Followers / Following */}
         {(vis?.followers !== false) && (
-          <div className="grid grid-cols-2 gap-3">
-            <div onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }} className="cursor-pointer">
-              <StatSquare icon={<Users className="text-brand-gold" />} label="Following" value={following.length.toString()} />
-            </div>
-            <div onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }} className="cursor-pointer">
-              <StatSquare icon={<UserPlus className="text-brand-gold" />} label="Followers" value={followers.length.toString()} />
-            </div>
+          <div className="flex items-center gap-4 text-sm px-1">
+            <button onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }} className="flex items-center gap-1 font-bold hover:text-brand-gold transition-colors">
+              <span>{following.length}</span>
+              <span className="text-brand-navy/40 font-normal">Following</span>
+            </button>
+            <span className="text-brand-navy/20">•</span>
+            <button onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }} className="flex items-center gap-1 font-bold hover:text-brand-gold transition-colors">
+              <span>{followers.length}</span>
+              <span className="text-brand-navy/40 font-normal">Followers</span>
+            </button>
           </div>
         )}
 
@@ -3667,19 +3637,24 @@ function ProfileScreen({ profile, userCards, onLogout, onDeleteAccount, onViewUs
         </div>
         <h2 className="font-display text-3xl font-bold">{profile.name}</h2>
         <p className="text-brand-gold font-bold text-xs uppercase tracking-[0.2em]">@{profile.handle || user.email?.split('@')[0]}</p>
+        <div className="flex items-center justify-center gap-4 mt-2 text-sm">
+          <button onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }} className="flex items-center gap-1 font-bold hover:text-brand-gold transition-colors">
+            <span>{following.length}</span>
+            <span className="text-brand-navy/40 font-normal">Following</span>
+          </button>
+          <span className="text-brand-navy/20">•</span>
+          <button onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }} className="flex items-center gap-1 font-bold hover:text-brand-gold transition-colors">
+            <span>{followers.length}</span>
+            <span className="text-brand-navy/40 font-normal">Followers</span>
+          </button>
+        </div>
       </header>
 
       {settingsModal}
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <StatSquare icon={<CheckCircle2 className="text-brand-gold" />} label="Stamps" value={lifetimeStamps.toString()} />
         <StatSquare icon={<Trophy className="text-brand-gold" />} label="Rewards" value={archivedCardsCount.toString()} />
-        <div onClick={() => { setFollowModalTab('following'); setShowFollowModal(true); }} className="cursor-pointer">
-          <StatSquare icon={<Users className="text-brand-gold" />} label="Following" value={following.length.toString()} />
-        </div>
-        <div onClick={() => { setFollowModalTab('followers'); setShowFollowModal(true); }} className="cursor-pointer">
-          <StatSquare icon={<UserPlus className="text-brand-gold" />} label="Followers" value={followers.length.toString()} />
-        </div>
       </div>
 
       <div className="flex p-1 glass-card rounded-2xl">
@@ -6331,7 +6306,7 @@ function CommunityScreen({ onViewUser, currentUser }: { onViewUser: (u: UserProf
   const [followingUids, setFollowingUids] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    const q = query(collection(db, 'users'), orderBy('totalStamps', 'desc'), limit(20));
+    const q = query(collection(db, 'users'), where('role', '==', 'consumer'), orderBy('totalStamps', 'desc'), limit(20));
     const unsubscribe = onSnapshot(q, (snap) => {
       setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
       setLoading(false);
@@ -7098,6 +7073,8 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
   const [isFollowing, setIsFollowing] = useState(false);
   const [profileTab, setProfileTab] = useState<'wall' | 'posts'>('wall');
   const [userPosts, setUserPosts] = useState<GlobalPost[]>([]);
+  const [targetFollowers, setTargetFollowers] = useState(0);
+  const [targetFollowing, setTargetFollowing] = useState(0);
 
   useEffect(() => {
     // Listen to target user profile for real-time stamp updates
@@ -7141,6 +7118,16 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
       setIsFollowing(snap.exists());
     });
 
+    // Target user follower/following counts
+    const unsubTargetFollowers = onSnapshot(
+      query(collection(db, 'follows'), where('followingUid', '==', initialTargetUser.uid)),
+      (snap) => setTargetFollowers(snap.size)
+    );
+    const unsubTargetFollowing = onSnapshot(
+      query(collection(db, 'follows'), where('followerUid', '==', initialTargetUser.uid)),
+      (snap) => setTargetFollowing(snap.size)
+    );
+
     let unsubStore = () => {};
     if (initialTargetUser.role === 'vendor') {
       const bq = query(collection(db, 'stores'), where('ownerUid', '==', initialTargetUser.uid), limit(1));
@@ -7168,6 +7155,8 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
       unsubStore();
       unsubHistory();
       unsubReviews();
+      unsubTargetFollowers();
+      unsubTargetFollowing();
       unsubFollow();
       unsubPosts();
     };
@@ -7288,8 +7277,19 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
             <img src={targetUser.photoURL} alt="" className="w-full h-full object-cover" />
           </div>
           <h2 className="text-2xl font-bold">{targetUser.name}</h2>
-          <p className="text-brand-gold font-bold text-xs uppercase tracking-[0.2em] mb-4">@{targetUser.email?.split('@')[0]}</p>
-          
+          <p className="text-brand-gold font-bold text-xs uppercase tracking-[0.2em]">@{targetUser.handle || targetUser.email?.split('@')[0]}</p>
+          <div className="flex items-center justify-center gap-4 mt-2 mb-4 text-sm">
+            <span className="flex items-center gap-1 font-bold">
+              <span>{targetFollowing}</span>
+              <span className="text-brand-navy/40 font-normal">Following</span>
+            </span>
+            <span className="text-brand-navy/20">•</span>
+            <span className="flex items-center gap-1 font-bold">
+              <span>{targetFollowers}</span>
+              <span className="text-brand-navy/40 font-normal">Followers</span>
+            </span>
+          </div>
+
           {currentUser && currentUser.uid !== targetUser.uid && (
             <div className="flex justify-center gap-2 mb-6">
               <button
