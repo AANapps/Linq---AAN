@@ -5521,6 +5521,7 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
   const [followingUids, setFollowingUids] = useState<Set<string>>(new Set());
   const [followingStoreIds, setFollowingStoreIds] = useState<Set<string>>(new Set());
   const [hotStores, setHotStores] = useState<StoreProfile[]>([]);
+  const [storeDistances, setStoreDistances] = useState<Map<string, number>>(new Map());
   const [joiningStoreId, setJoiningStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -5640,6 +5641,7 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
     (async () => {
       const nearby: StoreProfile[] = [];
       const rest: StoreProfile[] = [];
+      const distances = new Map<string, number>();
       for (const store of allStores) {
         let coords: { lat: number; lng: number } | null = null;
         if (store.lat && store.lng) {
@@ -5651,13 +5653,15 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
             await new Promise(r => setTimeout(r, 1100)); // Nominatim rate limit: 1 req/s
           }
         }
-        if (coords && haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng) <= 15) {
-          nearby.push(store);
+        if (coords) {
+          const km = haversineKm(userLoc.lat, userLoc.lng, coords.lat, coords.lng);
+          distances.set(store.id, km);
+          if (km <= 15) nearby.push(store); else rest.push(store);
         } else {
           rest.push(store);
         }
       }
-      if (!cancelled) setHotStores([...nearby, ...rest]);
+      if (!cancelled) { setHotStores([...nearby, ...rest]); setStoreDistances(distances); }
     })();
     return () => { cancelled = true; };
   }, [allStores, currentProfile?.location]);
@@ -5816,7 +5820,17 @@ function ForYouScreen({ onViewUser, onViewStore, currentUser, currentProfile, us
                         <p className="font-extrabold text-white text-xs leading-tight line-clamp-2 mb-1">
                           {store.reward || `${store.stamps_required_for_reward} stamps`}
                         </p>
-                        <p className="text-white/60 text-[9px] font-medium mt-auto line-clamp-1">{store.name}</p>
+                        <div className="mt-auto">
+                          <p className="text-white/60 text-[9px] font-medium line-clamp-1">{store.name}</p>
+                          {storeDistances.has(store.id) && (
+                            <p className="text-white/40 text-[8px] font-medium mt-0.5 flex items-center gap-0.5">
+                              <MapPin size={7} className="shrink-0" />
+                              {storeDistances.get(store.id)! < 1
+                                ? `${(storeDistances.get(store.id)! * 1000).toFixed(0)} m`
+                                : `${storeDistances.get(store.id)!.toFixed(1)} km`}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     </motion.div>
                   );
