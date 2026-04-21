@@ -426,13 +426,14 @@ export default function App() {
 
   // Listen to profile changes
   useEffect(() => {
-    if (!user) return;
-    return onSnapshot(doc(db, 'users', user.uid), (doc) => {
-      if (doc.exists()) {
-        setProfile(doc.data() as UserProfile);
+    if (!user || !selectedRole) return;
+    const collectionName = selectedRole === 'vendor' ? 'vendors' : 'users';
+    return onSnapshot(doc(db, collectionName, user.uid), (snap) => {
+      if (snap.exists()) {
+        setProfile(snap.data() as UserProfile);
       }
     }, (error) => console.error("Profile listener:", error));
-  }, [user]);
+  }, [user, selectedRole]);
   useEffect(() => {
     const seedDemoStores = async () => {
       try {
@@ -620,12 +621,13 @@ export default function App() {
         }
         setNeedsEmailVerification(false);
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-        if (!userDoc.exists()) {
+        const existingDoc = userDoc.exists() ? userDoc : await getDoc(doc(db, 'vendors', firebaseUser.uid));
+        if (!existingDoc.exists()) {
           setNeedsRoleSelection(true);
         } else {
-          const data = userDoc.data();
+          const data = existingDoc.data();
+          setSelectedRole(data.role as 'consumer' | 'vendor');
           if (data.roleConfirmed === true && !data.onboardingComplete) {
-            setSelectedRole(data.role as 'consumer' | 'vendor');
             setNeedsOnboarding(true);
           }
         }
@@ -658,12 +660,13 @@ export default function App() {
         const refreshed = auth.currentUser;
         if (!refreshed) return;
         const userDoc = await getDoc(doc(db, 'users', refreshed.uid));
-        if (!userDoc.exists()) {
+        const existingDoc = userDoc.exists() ? userDoc : await getDoc(doc(db, 'vendors', refreshed.uid));
+        if (!existingDoc.exists()) {
           setNeedsRoleSelection(true);
         } else {
-          const data = userDoc.data();
+          const data = existingDoc.data();
+          setSelectedRole(data.role as 'consumer' | 'vendor');
           if (data.roleConfirmed === true && !data.onboardingComplete) {
-            setSelectedRole(data.role as 'consumer' | 'vendor');
             setNeedsOnboarding(true);
           }
         }
@@ -720,12 +723,13 @@ export default function App() {
     if (refreshed?.emailVerified) {
       setNeedsEmailVerification(false);
       const userDoc = await getDoc(doc(db, 'users', refreshed.uid));
-      if (!userDoc.exists()) {
+      const existingDoc = userDoc.exists() ? userDoc : await getDoc(doc(db, 'vendors', refreshed.uid));
+      if (!existingDoc.exists()) {
         setNeedsRoleSelection(true);
       } else {
-        const data = userDoc.data();
+        const data = existingDoc.data();
+        setSelectedRole(data.role as 'consumer' | 'vendor');
         if (data.roleConfirmed === true && !data.onboardingComplete) {
-          setSelectedRole(data.role as 'consumer' | 'vendor');
           setNeedsOnboarding(true);
         }
       }
@@ -777,6 +781,7 @@ export default function App() {
       await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
     });
     await tryDelete(() => deleteDoc(doc(db, 'users', uid)));
+    await tryDelete(() => deleteDoc(doc(db, 'vendors', uid)));
 
     // Sign out first so the app navigates to the login screen immediately,
     // then attempt to delete the Firebase Auth record silently in the background.
@@ -789,12 +794,13 @@ export default function App() {
 
   const handleRoleSelect = async (role: 'consumer' | 'vendor') => {
     if (!user) return;
-    const userRef = doc(db, 'users', user.uid);
-    const existing = await getDoc(userRef);
+    const collectionName = role === 'vendor' ? 'vendors' : 'users';
+    const profileRef = doc(db, collectionName, user.uid);
+    const existing = await getDoc(profileRef);
     if (existing.exists()) {
-      await updateDoc(userRef, { role, roleConfirmed: true });
+      await updateDoc(profileRef, { role, roleConfirmed: true });
     } else {
-      await setDoc(userRef, {
+      await setDoc(profileRef, {
         uid: user.uid,
         name: user.displayName || 'Guest',
         email: user.email || '',
@@ -834,7 +840,7 @@ export default function App() {
         stamps_required_for_reward: 10,
         ...(data.location ? { lat: data.location.lat, lng: data.location.lng, location: data.location.city ?? '' } : {}),
       });
-      await updateDoc(doc(db, 'users', user.uid), { onboardingComplete: true });
+      await updateDoc(doc(db, 'vendors', user.uid), { onboardingComplete: true });
     }
     setNeedsOnboarding(false);
   };
@@ -3130,11 +3136,6 @@ function WallPostItem({ post, currentUser, wallOwnerUid }: { post: any, currentU
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex gap-0.5">
-            {[1, 2, 3, 4, 5].map(i => (
-              <Star key={i} size={10} className={cn(i <= (post.rating || 5) ? "text-brand-gold fill-brand-gold" : "text-brand-navy/5")} />
-            ))}
-          </div>
           {canDelete && (
             <button
               onClick={handleDelete}
@@ -7322,7 +7323,6 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
         fromPhoto: authorPhoto,
         toUid: targetUser.uid,
         content: newReview,
-        rating,
         likesCount: 0,
         createdAt: serverTimestamp()
       });
@@ -7346,7 +7346,6 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
       });
 
       setNewReview('');
-      setRating(5);
     } catch (error) {
       console.error(error);
     } finally {
@@ -7355,7 +7354,7 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
   };
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
       className="space-y-6 pb-20 text-brand-navy"
@@ -7518,13 +7517,6 @@ function PublicUserProfile({ targetUser: initialTargetUser, onBack, currentUser,
         <div className="space-y-4">
           {targetUser.uid !== currentUser.uid && (
             <div className="glass-card p-6 rounded-[2.5rem] space-y-4">
-              <div className="flex gap-2 mb-2">
-                {[1, 2, 3, 4, 5].map(star => (
-                  <button key={star} onClick={() => setRating(star)}>
-                    <Star size={20} className={cn(star <= rating ? "text-brand-gold fill-brand-gold" : "text-brand-navy/10")} />
-                  </button>
-                ))}
-              </div>
               <textarea
                 value={newReview}
                 onChange={(e) => setNewReview(e.target.value)}
