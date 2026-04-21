@@ -1847,8 +1847,9 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
       setUserCards(snap.docs.map(d => ({ id: d.id, ...d.data() } as Card)));
     });
   }, [user]);
+  const [storeCards, setStoreCards] = useState<Card[]>([]);
   const [isScanning, setIsScanning] = useState(false);
-  const [customerEmail, setCustomerEmail] = useState('');
+  const [customerHandle, setCustomerHandle] = useState('');
   const [stampQuantity, setStampQuantity] = useState(1);
   const [isIssuing, setIsIssuing] = useState(false);
   const [lastIssueTime, setLastIssueTime] = useState(0);
@@ -1887,8 +1888,17 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
     return unsubscribe;
   }, [user]);
 
+  useEffect(() => {
+    if (!store) return;
+    const q = query(collection(db, 'cards'), where('store_id', '==', store.id));
+    return onSnapshot(q, snap => setStoreCards(snap.docs.map(d => ({ id: d.id, ...d.data() } as Card))), () => {});
+  }, [store?.id]);
+
+  const totalMembers = new Set(storeCards.map(c => c.user_id)).size;
+  const totalStampsGiven = storeCards.reduce((sum, c) => sum + (c.current_stamps || 0) + ((c.total_completed_cycles || 0) * (store?.stamps_required_for_reward || 10)), 0);
+
   const handleIssueStamp = async () => {
-    if (!customerEmail || !store) return;
+    if (!customerHandle || !store) return;
     
     const now = Date.now();
     if (now - lastIssueTime < 1000) {
@@ -1902,7 +1912,8 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
 
     try {
       const usersRef = collection(db, 'users');
-      const q = query(usersRef, where('email', '==', customerEmail));
+      const handle = customerHandle.replace(/^@/, '').toLowerCase().trim();
+      const q = query(usersRef, where('handle', '==', handle));
       const querySnapshot = await getDocs(q);
 
       if (querySnapshot.empty) {
@@ -1979,7 +1990,7 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
         });
 
         setIssueStatus({ type: 'success', message: `${qty} stamp(s) issued to ${customer.name}!` });
-        setCustomerEmail('');
+        setCustomerHandle('');
         setStampQuantity(1);
       }
     } catch (error) {
@@ -2073,38 +2084,36 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
           </header>
 
           <div className="grid grid-cols-2 gap-4">
-            <StatSquare icon={<Users className="text-blue-500" />} label="Members" value="124" />
-            <StatSquare icon={<TrendingUp className="text-green-500" />} label="Stamps" value="842" />
+            <StatSquare icon={<Users className="text-blue-500" />} label="Members" value={String(totalMembers)} />
+            <StatSquare icon={<TrendingUp className="text-green-500" />} label="Stamps" value={String(totalStampsGiven)} />
           </div>
 
           <div className="bg-brand-navy p-8 rounded-[2.5rem] text-white text-center">
             <h3 className="font-display text-xl font-bold mb-4">Issue a Stamp</h3>
-            <p className="text-white/60 text-sm mb-8">Scan a customer's QR code or enter their email to issue a loyalty stamp.</p>
-            
+            <p className="text-white/60 text-sm mb-8">Scan a customer's QR code or enter their handle to issue a loyalty stamp.</p>
+
             <div className="space-y-4">
-              <button 
+              <button
                 onClick={() => setIsScanning(true)}
                 className="w-full bg-brand-gold text-brand-navy font-bold py-4 rounded-2xl flex items-center justify-center gap-3"
               >
                 <QrCode className="w-6 h-6" />
                 Open Scanner
               </button>
-              
+
               <div className="flex gap-4">
                 <div className="relative flex-1">
-                  <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
-                    <UserIcon className="w-5 h-5 text-white/20" />
-                  </div>
-                  <input 
-                    type="email"
-                    value={customerEmail}
-                    onChange={(e) => setCustomerEmail(e.target.value)}
-                    placeholder="Customer email..."
-                    className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-brand-gold/50"
+                  <span className="absolute inset-y-0 left-4 flex items-center text-white/30 font-bold text-sm pointer-events-none">@</span>
+                  <input
+                    type="text"
+                    value={customerHandle}
+                    onChange={(e) => setCustomerHandle(e.target.value.toLowerCase().replace(/\s/g, '').replace(/^@/, ''))}
+                    placeholder="customerhandle"
+                    className="w-full bg-white/10 border border-white/10 rounded-2xl py-4 pl-8 pr-4 text-white placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-brand-gold/50"
                   />
                 </div>
                 <div className="w-24">
-                  <input 
+                  <input
                     type="number"
                     min="1"
                     max="10"
@@ -2116,9 +2125,9 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
                 </div>
               </div>
 
-              <button 
+              <button
                 onClick={handleIssueStamp}
-                disabled={isIssuing || !customerEmail}
+                disabled={isIssuing || !customerHandle}
                 className="w-full bg-white text-brand-navy font-bold py-4 rounded-2xl disabled:opacity-50 transition-all"
               >
                 {isIssuing ? 'Issuing...' : 'Issue Manually'}
@@ -2133,80 +2142,6 @@ function VendorApp({ activeTab, setActiveTab, profile, user, onViewUser, notific
                 </p>
               )}
             </div>
-          </div>
-
-          {/* Card Settings */}
-          <div className="glass-card p-6 rounded-[2.5rem] space-y-5">
-            <div className="flex items-center gap-2">
-              <CreditCard size={18} className="text-brand-gold" />
-              <h3 className="font-bold text-lg">Card Settings</h3>
-            </div>
-            <p className="text-xs text-brand-navy/40 -mt-2">Users in progress finish their current card first. New cycles use the saved settings.</p>
-
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Stamps Required for Reward</label>
-              <input
-                type="number"
-                min="1"
-                max="50"
-                value={cardStampsInput}
-                onChange={e => setCardStampsInput(e.target.value)}
-                className="w-full px-5 py-4 rounded-2xl bg-brand-bg border border-brand-navy/10 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-brand-gold/30"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-brand-navy/50 uppercase tracking-widest">Reward</label>
-              <input
-                value={cardRewardInput}
-                onChange={e => setCardRewardInput(e.target.value)}
-                placeholder="e.g. Free coffee, Free class..."
-                className="w-full px-5 py-4 rounded-2xl bg-brand-bg border border-brand-navy/10 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-brand-gold/30"
-              />
-            </div>
-
-            {/* Live card preview */}
-            {(() => {
-              const previewStamps = Math.max(1, parseInt(cardStampsInput) || 10);
-              const bg = store?.theme || '#1e3a5f';
-              return (
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-brand-navy/40 mb-2">Card Preview</p>
-                  <div className="rounded-[1.75rem] p-5 space-y-3" style={{ background: `linear-gradient(135deg, ${bg}, ${bg}cc)` }}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        {store?.logoUrl
-                          ? <img src={store.logoUrl} alt="" className="w-9 h-9 rounded-xl object-cover border-2 border-white/30" />
-                          : <div className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center"><Store size={16} className="text-white/60" /></div>}
-                        <div>
-                          <p className="text-white font-bold text-sm">{store?.name || 'Your Business'}</p>
-                          <p className="text-white/50 text-[10px]">{previewStamps} stamps to redeem</p>
-                        </div>
-                      </div>
-                      {cardRewardInput && (
-                        <div className="bg-brand-gold/20 rounded-xl px-2.5 py-1">
-                          <p className="text-brand-gold text-[10px] font-bold">{cardRewardInput}</p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(previewStamps, 5)}, 1fr)` }}>
-                      {Array.from({ length: previewStamps }).map((_, i) => (
-                        <div key={i} className="aspect-square rounded-lg border border-dashed border-white/20 flex items-center justify-center">
-                          <span className="text-white/30 text-[8px] font-bold">{i + 1}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
-
-            <button
-              onClick={handleSaveCardSettings}
-              disabled={isSavingCard}
-              className="w-full bg-brand-navy text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
-            >
-              {cardSaved ? <><CheckCircle2 size={16} /> Card Saved!</> : isSavingCard ? 'Saving...' : <><Save size={16} /> Save — Set as New Card</>}
-            </button>
           </div>
 
           <div className="space-y-4">
