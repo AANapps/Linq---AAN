@@ -715,12 +715,10 @@ export default function App() {
     }
   };
 
-  const verificationActionSettings = { url: window.location.origin, handleCodeInApp: true };
-
   const handleEmailSignUp = async (email: string, password: string): Promise<string | null> => {
     try {
       const credential = await createUserWithEmailAndPassword(auth, email, password);
-      await sendEmailVerification(credential.user, verificationActionSettings);
+      sendEmailVerification(credential.user).catch(console.error);
       setNeedsEmailVerification(true);
       return null;
     } catch (err: any) {
@@ -742,7 +740,7 @@ export default function App() {
 
   const handleResendVerification = async () => {
     if (user && !user.emailVerified) {
-      await sendEmailVerification(user, verificationActionSettings);
+      sendEmailVerification(user).catch(console.error);
     }
   };
 
