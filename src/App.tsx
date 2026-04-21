@@ -609,9 +609,21 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (!firebaseUser) {
+        setUser(null);
+        setProfile(null);
+        setProfileCollection(null);
+        setSelectedRole(null);
+        setNeedsEmailVerification(false);
+        setNeedsRoleSelection(false);
+        setNeedsOnboarding(false);
+        setLoading(false);
+        return;
+      }
+
       setUser(firebaseUser);
-      if (firebaseUser) {
-        setLoading(true);
+
+      try {
         const isEmailProvider = firebaseUser.providerData.some(p => p.providerId === 'password');
         if (isEmailProvider && !firebaseUser.emailVerified) {
           setNeedsEmailVerification(true);
@@ -620,30 +632,31 @@ export default function App() {
           setLoading(false);
           return;
         }
+
         setNeedsEmailVerification(false);
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         const inUsers = userDoc.exists();
         const existingDoc = inUsers ? userDoc : await getDoc(doc(db, 'vendors', firebaseUser.uid));
+
         if (!existingDoc.exists()) {
           setNeedsRoleSelection(true);
+          setNeedsOnboarding(false);
+          setProfile(null);
         } else {
           const data = existingDoc.data();
           setSelectedRole(data.role as 'consumer' | 'vendor');
           setProfileCollection(inUsers ? 'users' : 'vendors');
           setProfile(data as UserProfile);
-          if (data.roleConfirmed === true && !data.onboardingComplete) {
-            setNeedsOnboarding(true);
-          }
+          setNeedsRoleSelection(false);
+          setNeedsOnboarding(data.roleConfirmed === true && !data.onboardingComplete);
         }
-      } else {
-        setNeedsEmailVerification(false);
+      } catch (err) {
+        console.error('Auth check failed:', err);
         setNeedsRoleSelection(false);
         setNeedsOnboarding(false);
-        setSelectedRole(null);
-        setProfileCollection(null);
-        setProfile(null);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return unsubscribe;
   }, []);
@@ -943,6 +956,16 @@ export default function App() {
 
   if (needsOnboarding) {
     return <OnboardingScreen user={user} role={selectedRole ?? 'consumer'} onComplete={handleOnboardingComplete} />;
+  }
+
+  if (!profile) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
+          <Sparkles className="w-12 h-12 text-brand-gold" />
+        </motion.div>
+      </div>
+    );
   }
 
   return (
