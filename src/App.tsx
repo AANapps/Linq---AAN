@@ -698,12 +698,20 @@ export default function App() {
       });
   }, []);
 
-  const handleLogin = async () => {
+  const handleLogin = async (): Promise<string | null> => {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+      return null;
+    } catch (error: any) {
       console.error("Login failed", error);
+      if (error?.code === 'auth/account-exists-with-different-credential') {
+        return 'This email is already registered. Please sign in with your email and password instead.';
+      }
+      if (error?.code === 'auth/popup-closed-by-user' || error?.code === 'auth/cancelled-popup-request') {
+        return null;
+      }
+      return error?.message ?? 'Sign in failed';
     }
   };
 
@@ -869,10 +877,10 @@ export default function App() {
     await tryDelete(() => deleteDoc(doc(db, 'users', uid)));
     await tryDelete(() => deleteDoc(doc(db, 'vendors', uid)));
 
-    // Sign out first so the app navigates to the login screen immediately,
-    // then attempt to delete the Firebase Auth record silently in the background.
+    // Delete the Firebase Auth record first (requires user to still be authenticated),
+    // then sign out. If deletion fails (e.g. requires-recent-login), sign out anyway.
+    try { await user.delete(); } catch { /* requires-recent-login or similar — auth account survives */ }
     await signOut(auth);
-    user.delete().catch(() => {});
   };
 
   const handleRoleSelect = async (role: 'consumer' | 'vendor') => {
@@ -1139,7 +1147,7 @@ export default function App() {
 // --- Shared Components ---
 
 function LandingPage({ onLogin, onEmailSignUp, onEmailSignIn }: {
-  onLogin: () => void;
+  onLogin: () => Promise<string | null>;
   onEmailSignUp: (email: string, password: string) => Promise<string | null>;
   onEmailSignIn: (email: string, password: string) => Promise<string | null>;
 }) {
@@ -1150,6 +1158,14 @@ function LandingPage({ onLogin, onEmailSignUp, onEmailSignIn }: {
   const [showPassword, setShowPassword] = React.useState(false);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
+    const err = await onLogin();
+    setLoading(false);
+    if (err) setError(err);
+  };
 
   const reset = (next: 'home' | 'signin' | 'signup') => {
     setError(''); setEmail(''); setPassword(''); setConfirmPassword(''); setMode(next);
@@ -1183,9 +1199,16 @@ function LandingPage({ onLogin, onEmailSignUp, onEmailSignIn }: {
           <p className="text-white/60 text-lg max-w-xs mx-auto">Collect stamps, unlock rewards, and support your favourite local businesses.</p>
         </motion.div>
         <div className="w-full max-w-xs space-y-3">
+          {error && (
+            <div className="flex items-center gap-2 bg-red-900/40 border border-red-400/30 rounded-2xl px-4 py-3">
+              <AlertCircle size={14} className="text-red-300 shrink-0" />
+              <p className="text-red-200 text-xs">{error}</p>
+            </div>
+          )}
           <button
-            onClick={onLogin}
-            className="w-full bg-white text-brand-navy font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg"
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full bg-white text-brand-navy font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg disabled:opacity-60"
           >
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="" />
             Continue with Google
@@ -1299,8 +1322,9 @@ function LandingPage({ onLogin, onEmailSignUp, onEmailSignIn }: {
           </div>
 
           <button
-            onClick={onLogin}
-            className="w-full bg-white/10 border border-white/20 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-white/20 transition-all"
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full bg-white/10 border border-white/20 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-white/20 transition-all disabled:opacity-60"
           >
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="" />
             Continue with Google
