@@ -885,30 +885,36 @@ export default function App() {
     await signOut(auth);
   };
 
-  const handleRoleSelect = async (role: 'consumer' | 'vendor') => {
-    if (!user) return;
-    const collectionName = role === 'vendor' ? 'vendors' : 'users';
-    const profileRef = doc(db, collectionName, user.uid);
-    const existing = await getDoc(profileRef);
-    if (existing.exists()) {
-      await updateDoc(profileRef, { role, roleConfirmed: true });
-    } else {
-      await setDoc(profileRef, {
-        uid: user.uid,
-        name: user.displayName || 'Guest',
-        email: user.email || '',
-        photoURL: user.photoURL || '',
-        role,
-        roleConfirmed: true,
-        total_cards_held: 0,
-        totalStamps: 0,
-        totalRedeemed: 0
-      });
+  const handleRoleSelect = async (role: 'consumer' | 'vendor'): Promise<boolean> => {
+    if (!user) return false;
+    try {
+      const collectionName = role === 'vendor' ? 'vendors' : 'users';
+      const profileRef = doc(db, collectionName, user.uid);
+      const existing = await getDoc(profileRef);
+      if (existing.exists()) {
+        await updateDoc(profileRef, { role, roleConfirmed: true });
+      } else {
+        await setDoc(profileRef, {
+          uid: user.uid,
+          name: user.displayName || 'Guest',
+          email: user.email || '',
+          photoURL: user.photoURL || '',
+          role,
+          roleConfirmed: true,
+          total_cards_held: 0,
+          totalStamps: 0,
+          totalRedeemed: 0
+        });
+      }
+      setSelectedRole(role);
+      setProfileCollection(collectionName);
+      setNeedsRoleSelection(false);
+      setNeedsOnboarding(true);
+      return true;
+    } catch (err) {
+      console.error('Role selection failed:', err);
+      return false;
     }
-    setSelectedRole(role);
-    setProfileCollection(collectionName);
-    setNeedsRoleSelection(false);
-    setNeedsOnboarding(true);
   };
 
   const handleOnboardingComplete = async (data: ConsumerOnboardingData | VendorOnboardingData) => {
@@ -1169,8 +1175,11 @@ function LandingPage({ onLogin, onEmailSignUp, onEmailSignIn }: {
     setLoading(true);
     setError('');
     const err = await onLogin();
-    setLoading(false);
-    if (err) setError(err);
+    if (err) {
+      setLoading(false);
+      setError(err);
+    }
+    // on success keep loading=true — the component unmounts when auth state resolves
   };
 
   const reset = (next: 'home' | 'signin' | 'signup') => {
@@ -1188,8 +1197,11 @@ function LandingPage({ onLogin, onEmailSignUp, onEmailSignIn }: {
     const err = mode === 'signup'
       ? await onEmailSignUp(email.trim(), password)
       : await onEmailSignIn(email.trim(), password);
-    setLoading(false);
-    if (err) setError(err);
+    if (err) {
+      setLoading(false);
+      setError(err);
+    }
+    // on success keep loading=true — the component unmounts when auth state resolves
   };
 
   const bg = { background: 'linear-gradient(160deg, #7f1d1d 0%, #b91c1c 40%, #dc2626 70%, #ef4444 100%)' };
@@ -1420,11 +1432,17 @@ function EmailVerificationScreen({ user, onCheck, onResend, onLogout }: {
   );
 }
 
-function RoleSelectionScreen({ user, onSelect }: { user: FirebaseUser, onSelect: (role: 'consumer' | 'vendor') => void }) {
+function RoleSelectionScreen({ user, onSelect }: { user: FirebaseUser, onSelect: (role: 'consumer' | 'vendor') => Promise<boolean> }) {
   const [selecting, setSelecting] = React.useState<'consumer' | 'vendor' | null>(null);
+  const [error, setError] = React.useState('');
   const handle = async (role: 'consumer' | 'vendor') => {
     setSelecting(role);
-    await onSelect(role);
+    setError('');
+    const ok = await onSelect(role);
+    if (!ok) {
+      setSelecting(null);
+      setError('Something went wrong. Please try again.');
+    }
   };
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-8 text-center bg-brand-bg">
@@ -1468,6 +1486,12 @@ function RoleSelectionScreen({ user, onSelect }: { user: FirebaseUser, onSelect:
         </button>
       </div>
 
+      {error && (
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl px-4 py-3 mt-4 w-full max-w-xs">
+          <AlertCircle size={14} className="text-red-500 shrink-0" />
+          <p className="text-red-600 text-xs">{error}</p>
+        </div>
+      )}
       <p className="text-xs text-brand-navy/30 mt-8">This cannot be changed after sign up</p>
     </div>
   );
