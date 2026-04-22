@@ -96,7 +96,8 @@ import {
   EyeOff,
   AlertCircle,
   RefreshCw,
-  Award
+  Award,
+  Stamp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
@@ -956,7 +957,7 @@ export default function App() {
           animate={{ rotate: 360 }}
           transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
         >
-          <Sparkles className="w-12 h-12 text-brand-gold" />
+          <Stamp className="w-12 h-12 text-brand-gold" />
         </motion.div>
       </div>
     );
@@ -982,7 +983,7 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
-          <Sparkles className="w-12 h-12 text-brand-gold" />
+          <Stamp className="w-12 h-12 text-brand-gold" />
         </motion.div>
       </div>
     );
