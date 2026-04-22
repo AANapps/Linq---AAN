@@ -621,11 +621,10 @@ export default function App() {
         return;
       }
 
-      setUser(firebaseUser);
-
       try {
         const isEmailProvider = firebaseUser.providerData.some(p => p.providerId === 'password');
         if (isEmailProvider && !firebaseUser.emailVerified) {
+          setUser(firebaseUser);
           setNeedsEmailVerification(true);
           setNeedsRoleSelection(false);
           setNeedsOnboarding(false);
@@ -633,17 +632,20 @@ export default function App() {
           return;
         }
 
-        setNeedsEmailVerification(false);
         const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
         const inUsers = userDoc.exists();
         const existingDoc = inUsers ? userDoc : await getDoc(doc(db, 'vendors', firebaseUser.uid));
 
         if (!existingDoc.exists()) {
+          setUser(firebaseUser);
+          setNeedsEmailVerification(false);
           setNeedsRoleSelection(true);
           setNeedsOnboarding(false);
           setProfile(null);
         } else {
           const data = existingDoc.data();
+          setUser(firebaseUser);
+          setNeedsEmailVerification(false);
           setSelectedRole(data.role as 'consumer' | 'vendor');
           setProfileCollection(inUsers ? 'users' : 'vendors');
           setProfile(data as UserProfile);
@@ -652,7 +654,9 @@ export default function App() {
         }
       } catch (err) {
         console.error('Auth check failed:', err);
-        setNeedsRoleSelection(false);
+        setUser(firebaseUser);
+        setNeedsEmailVerification(false);
+        setNeedsRoleSelection(true);
         setNeedsOnboarding(false);
       } finally {
         setLoading(false);
@@ -918,6 +922,8 @@ export default function App() {
         ...(data.location ? { location: data.location } : {}),
         onboardingComplete: true
       });
+      const snap = await getDoc(doc(db, 'users', user.uid));
+      if (snap.exists()) setProfile(snap.data() as UserProfile);
     } else {
       await addDoc(collection(db, 'stores'), {
         name: data.businessName,
@@ -931,6 +937,8 @@ export default function App() {
         ...(data.location ? { lat: data.location.lat, lng: data.location.lng, location: data.location.city ?? '' } : {}),
       });
       await updateDoc(doc(db, 'vendors', user.uid), { onboardingComplete: true });
+      const snap = await getDoc(doc(db, 'vendors', user.uid));
+      if (snap.exists()) setProfile(snap.data() as UserProfile);
     }
     setNeedsOnboarding(false);
   };
